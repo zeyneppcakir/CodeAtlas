@@ -1,8 +1,9 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 
-import '../theme/app_theme.dart';
 import '../services/task_service.dart';
+import '../theme/app_theme.dart';
+import '../theme/priority_style.dart';
 import 'add_task_screen.dart';
 
 class ProjectTasksScreen extends StatefulWidget {
@@ -139,16 +140,17 @@ class _ProjectTasksScreenState extends State<ProjectTasksScreen> {
   }
 
   Widget _priorityChip(int p) {
-    final text =
-        switch (p) { 1 => 'Düşük', 2 => 'Orta', 3 => 'Yüksek', _ => 'Orta' };
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
-        color: AppColors.navySoft,
+        color: PriorityStyle.backgroundColor(p),
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: AppColors.teal.withOpacity(0.6)),
+        border: Border.all(color: PriorityStyle.borderColor(p)),
       ),
-      child: Text(text, style: const TextStyle(color: AppColors.text)),
+      child: Text(
+        PriorityStyle.label(p),
+        style: TextStyle(color: PriorityStyle.textColor(p)),
+      ),
     );
   }
 }
