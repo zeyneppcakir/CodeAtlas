@@ -1,4 +1,5 @@
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 
@@ -21,6 +22,22 @@ class _LoginScreenState extends State<LoginScreen> {
   bool _obscure = true;
   bool _loading = false;
 
+  /// ✅ users/{email} doc'u oluştur/güncelle
+  Future<void> _ensureUserDoc(User user) async {
+    final email = user.email;
+    if (email == null) return;
+
+    final ref = FirebaseFirestore.instance.collection('users').doc(email);
+
+    await ref.set({
+      'email': email,
+      'uid': user.uid,
+      'lastLogin': FieldValue.serverTimestamp(),
+      // createdAt sadece ilk oluşturmada yazılsın
+      'createdAt': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
+  }
+
   String? _emailValidator(String? v) {
     final value = (v ?? '').trim();
     if (value.isEmpty) return 'E-posta gerekli';
@@ -37,7 +54,10 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   void _snack(String msg) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(msg)),
+    );
   }
 
   String _mapAuthError(FirebaseAuthException e) {
@@ -63,10 +83,15 @@ class _LoginScreenState extends State<LoginScreen> {
 
     setState(() => _loading = true);
     try {
-      await FirebaseAuth.instance.signInWithEmailAndPassword(
+      final cred = await FirebaseAuth.instance.signInWithEmailAndPassword(
         email: _emailCtrl.text.trim(),
         password: _passCtrl.text,
       );
+
+      final user = cred.user;
+      if (user != null) {
+        await _ensureUserDoc(user);
+      }
 
       if (!mounted) return;
       Navigator.pushReplacement(
@@ -75,8 +100,49 @@ class _LoginScreenState extends State<LoginScreen> {
       );
     } on FirebaseAuthException catch (e) {
       _snack(_mapAuthError(e));
-    } catch (_) {
+    } on FirebaseException catch (e) {
+      debugPrint('FIRESTORE ERROR: ${e.code} - ${e.message}');
+      _snack('Veritabanı hatası: ${e.code}');
+    } catch (e) {
+      debugPrint('LOGIN ERROR: $e');
       _snack('Beklenmeyen bir hata oluştu.');
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _loginWithGoogle() async {
+    setState(() => _loading = true);
+    try {
+      final googleUser = await GoogleSignIn().signIn();
+      if (googleUser == null) return; // kullanıcı vazgeçti
+
+      final googleAuth = await googleUser.authentication;
+      final credential = GoogleAuthProvider.credential(
+        accessToken: googleAuth.accessToken,
+        idToken: googleAuth.idToken,
+      );
+
+      final cred = await FirebaseAuth.instance.signInWithCredential(credential);
+
+      final user = cred.user;
+      if (user != null) {
+        await _ensureUserDoc(user);
+      }
+
+      if (!mounted) return;
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (_) => const HomeScreen()),
+      );
+    } on FirebaseAuthException catch (e) {
+      _snack(e.message ?? 'Google ile giriş başarısız.');
+    } on FirebaseException catch (e) {
+      debugPrint('FIRESTORE ERROR: ${e.code} - ${e.message}');
+      _snack('Veritabanı hatası: ${e.code}');
+    } catch (e) {
+      debugPrint('GOOGLE LOGIN ERROR: $e');
+      _snack('Google giriş hatası oluştu.');
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -101,34 +167,6 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
-  Future<void> _loginWithGoogle() async {
-    setState(() => _loading = true);
-    try {
-      final googleUser = await GoogleSignIn().signIn();
-      if (googleUser == null) return; // kullanıcı vazgeçti
-
-      final googleAuth = await googleUser.authentication;
-      final credential = GoogleAuthProvider.credential(
-        accessToken: googleAuth.accessToken,
-        idToken: googleAuth.idToken,
-      );
-
-      await FirebaseAuth.instance.signInWithCredential(credential);
-
-      if (!mounted) return;
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(builder: (_) => const HomeScreen()),
-      );
-    } on FirebaseAuthException catch (e) {
-      _snack(e.message ?? 'Google ile giriş başarısız.');
-    } catch (e) {
-      _snack('Google giriş hatası: $e');
-    } finally {
-      if (mounted) setState(() => _loading = false);
-    }
-  }
-
   @override
   void dispose() {
     _emailCtrl.dispose();
@@ -141,7 +179,7 @@ class _LoginScreenState extends State<LoginScreen> {
     final bottomInset = MediaQuery.of(context).viewInsets.bottom;
 
     return Scaffold(
-      resizeToAvoidBottomInset: true, // ✅ klavye açılınca sayfa taşmasın
+      resizeToAvoidBottomInset: true,
       body: Stack(
         children: [
           Positioned.fill(child: CustomPaint(painter: _DotGridPainter())),
@@ -149,7 +187,6 @@ class _LoginScreenState extends State<LoginScreen> {
             child: LayoutBuilder(
               builder: (context, constraints) {
                 return SingleChildScrollView(
-                  // ✅ klavye açılınca içerik yukarı taşınsın
                   padding: EdgeInsets.fromLTRB(20, 20, 20, 20 + bottomInset),
                   child: ConstrainedBox(
                     constraints:
@@ -207,9 +244,11 @@ class _LoginScreenState extends State<LoginScreen> {
                                       suffixIcon: IconButton(
                                         onPressed: () => setState(
                                             () => _obscure = !_obscure),
-                                        icon: Icon(_obscure
-                                            ? Icons.visibility
-                                            : Icons.visibility_off),
+                                        icon: Icon(
+                                          _obscure
+                                              ? Icons.visibility
+                                              : Icons.visibility_off,
+                                        ),
                                       ),
                                     ),
                                   ),
@@ -251,17 +290,20 @@ class _LoginScreenState extends State<LoginScreen> {
                                   Row(
                                     mainAxisAlignment: MainAxisAlignment.center,
                                     children: [
-                                      Text('Hesabın yok mu? ',
-                                          style: TextStyle(
-                                              color: AppColors.textSoft)),
+                                      Text(
+                                        'Hesabın yok mu? ',
+                                        style: TextStyle(
+                                            color: AppColors.textSoft),
+                                      ),
                                       TextButton(
                                         onPressed: _loading
                                             ? null
                                             : () => Navigator.push(
                                                   context,
                                                   MaterialPageRoute(
-                                                      builder: (_) =>
-                                                          const RegisterScreen()),
+                                                    builder: (_) =>
+                                                        const RegisterScreen(),
+                                                  ),
                                                 ),
                                         child: const Text('Kayıt Ol'),
                                       ),
