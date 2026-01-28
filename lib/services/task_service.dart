@@ -7,7 +7,9 @@ class TaskService {
 
   String get _uid {
     final uid = _auth.currentUser?.uid;
-    if (uid == null) throw Exception('Oturum bulunamadı. Tekrar giriş yap.');
+    if (uid == null) {
+      throw Exception('Oturum bulunamadı. Tekrar giriş yap.');
+    }
     return uid;
   }
 
@@ -15,12 +17,13 @@ class TaskService {
     return _db.collection('projects').doc(projectId).collection('tasks');
   }
 
+  /// TASK EKLEME
   Future<void> addTask({
     required String projectId,
     required String title,
     String? description,
     required int priority,
-    required DateTime dueDate, // artık zorunlu (sen zaten boş bırakmıyorsun)
+    required DateTime dueDate,
   }) async {
     final uid = _uid;
 
@@ -29,15 +32,42 @@ class TaskService {
       'description': description?.trim(),
       'priority': priority,
       'dueDate': Timestamp.fromDate(dueDate),
-      'ownerId': uid, // ✅ RULES ile uyumlu alan
+      'ownerId': uid,
       'createdAt': FieldValue.serverTimestamp(),
       'updatedAt': FieldValue.serverTimestamp(),
     });
   }
 
+  /// TASK GÜNCELLEME
+  Future<void> updateTask({
+    required String projectId,
+    required String taskId,
+    required String title,
+    String? description,
+    required int priority,
+    required DateTime dueDate,
+  }) async {
+    await _tasksRef(projectId).doc(taskId).update({
+      'title': title.trim(),
+      'description': description?.trim(),
+      'priority': priority,
+      'dueDate': Timestamp.fromDate(dueDate),
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+  }
+
+  /// TASK SİLME
+  Future<void> deleteTask({
+    required String projectId,
+    required String taskId,
+  }) async {
+    await _tasksRef(projectId).doc(taskId).delete();
+  }
+
+  /// TASK LİSTELEME
   Stream<QuerySnapshot<Map<String, dynamic>>> tasksStream({
     required String projectId,
-    required String orderByField, // 'dueDate' veya 'priority'
+    required String orderByField,
     required bool descending,
   }) {
     return _tasksRef(projectId)
