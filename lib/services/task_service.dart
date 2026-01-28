@@ -17,6 +17,7 @@ class TaskService {
     return _db.collection('projects').doc(projectId).collection('tasks');
   }
 
+  /// TASK EKLEME
   Future<void> addTask({
     required String projectId,
     required String title,
@@ -38,18 +39,49 @@ class TaskService {
 
       'priority': priority,
       'dueDate': Timestamp.fromDate(dueDate),
+<<<<<<< HEAD
 
       // (Zorunlu değil ama faydalı) task'ı kim oluşturdu
       'ownerId': uid,
 
+=======
+      'ownerId': uid,
+>>>>>>> dev
       'createdAt': FieldValue.serverTimestamp(),
       'updatedAt': FieldValue.serverTimestamp(),
     });
   }
 
+  /// TASK GÜNCELLEME
+  Future<void> updateTask({
+    required String projectId,
+    required String taskId,
+    required String title,
+    String? description,
+    required int priority,
+    required DateTime dueDate,
+  }) async {
+    await _tasksRef(projectId).doc(taskId).update({
+      'title': title.trim(),
+      'description': description?.trim(),
+      'priority': priority,
+      'dueDate': Timestamp.fromDate(dueDate),
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+  }
+
+  /// TASK SİLME
+  Future<void> deleteTask({
+    required String projectId,
+    required String taskId,
+  }) async {
+    await _tasksRef(projectId).doc(taskId).delete();
+  }
+
+  /// TASK LİSTELEME
   Stream<QuerySnapshot<Map<String, dynamic>>> tasksStream({
     required String projectId,
-    required String orderByField, // 'dueDate' veya 'priority'
+    required String orderByField,
     required bool descending,
   }) {
     return _tasksRef(projectId)

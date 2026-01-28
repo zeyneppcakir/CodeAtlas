@@ -1,11 +1,26 @@
 import 'package:flutter/material.dart';
-
 import '../theme/app_theme.dart';
 import '../services/task_service.dart';
 
 class AddTaskScreen extends StatefulWidget {
   final String projectId;
-  const AddTaskScreen({super.key, required this.projectId});
+
+  // 👇 EDIT için opsiyonel alanlar
+  final String? taskId;
+  final String? initialTitle;
+  final String? initialDescription;
+  final int? initialPriority;
+  final DateTime? initialDueDate;
+
+  const AddTaskScreen({
+    super.key,
+    required this.projectId,
+    this.taskId,
+    this.initialTitle,
+    this.initialDescription,
+    this.initialPriority,
+    this.initialDueDate,
+  });
 
   @override
   State<AddTaskScreen> createState() => _AddTaskScreenState();
@@ -20,6 +35,21 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
 
   final _service = TaskService();
 
+  bool get _isEdit => widget.taskId != null;
+
+  @override
+  void initState() {
+    super.initState();
+
+    // 👇 Eğer edit modundaysa alanları doldur
+    if (_isEdit) {
+      _titleCtrl.text = widget.initialTitle ?? '';
+      _descCtrl.text = widget.initialDescription ?? '';
+      _priority = widget.initialPriority ?? 2;
+      _dueDate = widget.initialDueDate;
+    }
+  }
+
   Future<void> _pickDate() async {
     final now = DateTime.now();
     final picked = await showDatePicker(
@@ -33,6 +63,7 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
 
   Future<void> _save() async {
     final title = _titleCtrl.text.trim();
+
     if (title.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Task başlığı boş olamaz')),
@@ -40,7 +71,6 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
       return;
     }
 
-    // İlk sürümde index/ordering derdi çıkmasın diye dueDate boş bırakma:
     if (_dueDate == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Lütfen bir bitiş tarihi seç')),
@@ -49,15 +79,30 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
     }
 
     setState(() => _loading = true);
+
     try {
-      await _service.addTask(
-        projectId: widget.projectId,
-        title: title,
-        description:
-            _descCtrl.text.trim().isEmpty ? null : _descCtrl.text.trim(),
-        priority: _priority,
-        dueDate: _dueDate!, // zaten null kontrolünü yapıyorsun
-      );
+      if (_isEdit) {
+        // ✅ UPDATE
+        await _service.updateTask(
+          projectId: widget.projectId,
+          taskId: widget.taskId!,
+          title: title,
+          description:
+              _descCtrl.text.trim().isEmpty ? null : _descCtrl.text.trim(),
+          priority: _priority,
+          dueDate: _dueDate!,
+        );
+      } else {
+        // ✅ ADD
+        await _service.addTask(
+          projectId: widget.projectId,
+          title: title,
+          description:
+              _descCtrl.text.trim().isEmpty ? null : _descCtrl.text.trim(),
+          priority: _priority,
+          dueDate: _dueDate!,
+        );
+      }
 
       if (!mounted) return;
       Navigator.pop(context);
@@ -87,7 +132,7 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
     return Scaffold(
       appBar: AppBar(
         backgroundColor: AppColors.navy,
-        title: const Text('Yeni Task'),
+        title: Text(_isEdit ? 'Task Düzenle' : 'Yeni Task'),
       ),
       body: Padding(
         padding: const EdgeInsets.all(16),
@@ -132,7 +177,7 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
                 onPressed: _loading ? null : _save,
                 child: _loading
                     ? const CircularProgressIndicator()
-                    : const Text('Kaydet'),
+                    : Text(_isEdit ? 'Güncelle' : 'Kaydet'),
               ),
             ),
           ],
