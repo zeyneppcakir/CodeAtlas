@@ -2,12 +2,14 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
 class TaskService {
-  final _db = FirebaseFirestore.instance;
-  final _auth = FirebaseAuth.instance;
+  final FirebaseFirestore _db = FirebaseFirestore.instance;
+  final FirebaseAuth _auth = FirebaseAuth.instance;
 
   String get _uid {
     final uid = _auth.currentUser?.uid;
-    if (uid == null) throw Exception('Oturum bulunamadı. Tekrar giriş yap.');
+    if (uid == null) {
+      throw Exception('Oturum bulunamadı. Tekrar giriş yap.');
+    }
     return uid;
   }
 
@@ -20,16 +22,26 @@ class TaskService {
     required String title,
     String? description,
     required int priority,
-    required DateTime dueDate, // artık zorunlu (sen zaten boş bırakmıyorsun)
+    required DateTime dueDate,
   }) async {
     final uid = _uid;
 
+    final t = title.trim();
+    final d = description?.trim();
+
     await _tasksRef(projectId).add({
-      'title': title.trim(),
-      'description': description?.trim(),
+      // ✅ hocanın istediği: task içinde hangi projeye ait olduğu bilgisi
+      'projectId': projectId,
+
+      'title': t,
+      if (d != null && d.isNotEmpty) 'description': d,
+
       'priority': priority,
       'dueDate': Timestamp.fromDate(dueDate),
-      'ownerId': uid, // ✅ RULES ile uyumlu alan
+
+      // (Zorunlu değil ama faydalı) task'ı kim oluşturdu
+      'ownerId': uid,
+
       'createdAt': FieldValue.serverTimestamp(),
       'updatedAt': FieldValue.serverTimestamp(),
     });
