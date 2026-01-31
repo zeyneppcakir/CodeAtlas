@@ -31,7 +31,7 @@ class TaskService {
     final d = description?.trim();
 
     await _tasksRef(projectId).add({
-      // ✅ hocanın istediği: task içinde hangi projeye ait olduğu bilgisi
+      // ✅ (Hocanın isteği) task içinde hangi projeye ait olduğu bilgisi
       'projectId': projectId,
 
       'title': t,
@@ -39,14 +39,10 @@ class TaskService {
 
       'priority': priority,
       'dueDate': Timestamp.fromDate(dueDate),
-<<<<<<< HEAD
 
-      // (Zorunlu değil ama faydalı) task'ı kim oluşturdu
+      // task'ı kim oluşturdu (rules/izleme için faydalı)
       'ownerId': uid,
 
-=======
-      'ownerId': uid,
->>>>>>> dev
       'createdAt': FieldValue.serverTimestamp(),
       'updatedAt': FieldValue.serverTimestamp(),
     });
@@ -61,9 +57,14 @@ class TaskService {
     required int priority,
     required DateTime dueDate,
   }) async {
+    final d = description?.trim();
+
     await _tasksRef(projectId).doc(taskId).update({
       'title': title.trim(),
-      'description': description?.trim(),
+
+      // boş string göndermeyelim
+      if (d != null && d.isNotEmpty) 'description': d else 'description': null,
+
       'priority': priority,
       'dueDate': Timestamp.fromDate(dueDate),
       'updatedAt': FieldValue.serverTimestamp(),
