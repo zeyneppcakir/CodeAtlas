@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 
 import '../theme/app_theme.dart';
 import '../services/project_service.dart';
-import 'add_project_screen.dart';
+import 'import_project_screen.dart';
 import 'project_tasks_screen.dart';
 
 class ProjectsScreen extends StatefulWidget {
@@ -102,6 +102,13 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
     return top.map((e) => '${e.key} %${e.value}').join(' • ');
   }
 
+  Future<void> _openImport() async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const ImportProjectScreen()),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -111,13 +118,8 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
       ),
       floatingActionButton: FloatingActionButton(
         backgroundColor: AppColors.teal,
-        onPressed: () async {
-          await Navigator.push(
-            context,
-            MaterialPageRoute(builder: (_) => const AddProjectScreen()),
-          );
-        },
-        child: const Icon(Icons.add, color: Colors.black),
+        onPressed: _openImport,
+        child: const Icon(Icons.upload_file, color: Colors.black),
       ),
       body: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
         stream: _service.myProjectsStream(),
@@ -150,10 +152,36 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
           final docs = snapshot.data!.docs;
 
           if (docs.isEmpty) {
-            return const Center(
-              child: Text(
-                'Henüz proje yok. + ile ekle.',
-                style: TextStyle(color: AppColors.textSoft),
+            return Center(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.folder_open, size: 44),
+                    const SizedBox(height: 10),
+                    const Text(
+                      'Henüz proje yok.',
+                      style: TextStyle(color: AppColors.textSoft, fontSize: 16),
+                    ),
+                    const SizedBox(height: 6),
+                    const Text(
+                      'ZIP yükleyerek proje ekleyebilirsin.',
+                      style: TextStyle(color: AppColors.textSoft),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 14),
+                    SizedBox(
+                      width: double.infinity,
+                      height: 46,
+                      child: ElevatedButton.icon(
+                        onPressed: _openImport,
+                        icon: const Icon(Icons.upload_file),
+                        label: const Text('ZIP Yükle'),
+                      ),
+                    ),
+                  ],
+                ),
               ),
             );
           }
