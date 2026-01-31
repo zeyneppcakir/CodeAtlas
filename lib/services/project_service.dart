@@ -8,9 +8,13 @@ class ProjectService {
   String? get _uid => _auth.currentUser?.uid;
 
   /// ✅ Proje ekle
+  /// - languageStats: {"Dart": 92, "HTML": 8} gibi yüzde map'i
+  /// - fileCount: filtre sonrası sayılan dosya adedi
   Future<void> addProject({
     required String name,
     required String primaryLanguage,
+    Map<String, int>? languageStats,
+    int? fileCount,
   }) async {
     final uid = _uid;
     if (uid == null) {
@@ -22,6 +26,22 @@ class ProjectService {
       throw Exception('Proje adı boş olamaz.');
     }
 
+    // güvenli temizlik
+    final cleanedStats = <String, int>{};
+    if (languageStats != null) {
+      languageStats.forEach((k, v) {
+        final key = k.trim();
+        if (key.isEmpty) return;
+        if (v <= 0) return;
+        cleanedStats[key] = v;
+      });
+    }
+
+    int? cleanedFileCount = fileCount;
+    if (cleanedFileCount != null && cleanedFileCount < 0) {
+      cleanedFileCount = null;
+    }
+
     try {
       await _db.collection('projects').add({
         'name': cleanedName,
@@ -29,6 +49,10 @@ class ProjectService {
         'primaryLanguage': primaryLanguage,
         'createdAt': FieldValue.serverTimestamp(),
         'updatedAt': FieldValue.serverTimestamp(),
+
+        // ✅ yeni alanlar (opsiyonel)
+        if (cleanedStats.isNotEmpty) 'languageStats': cleanedStats,
+        if (cleanedFileCount != null) 'fileCount': cleanedFileCount,
       });
     } on FirebaseException catch (e) {
       throw Exception('Firestore hata: ${e.message ?? e.code}');

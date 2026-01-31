@@ -24,35 +24,25 @@ class _ImportProjectScreenState extends State<ImportProjectScreen> {
   String? _projectName;
   String? _primaryLanguage;
   int? _fileCount;
+
+  /// GitHub benzeri yüzde dağılımı: {'Dart': 92, 'HTML': 8}
   Map<String, int>? _languageStats;
 
   final _projectService = ProjectService();
 
   // ---------------- ZIP okuma ----------------
 
-  Future<Uint8List> _readZipBytes(PlatformFile picked) async {
-    // 1) bytes varsa direkt
-    if (picked.bytes != null) return picked.bytes!;
-
-    // 2) path varsa dosyadan oku
-    if (picked.path != null) {
-      final file = File(picked.path!);
-      return await file.readAsBytes();
+  /// ✅ En stabil okuma: path üzerinden oku.
+  /// (withData=true kullanınca büyük ziplerde RAM patlayıp app kapanabiliyor)
+  Future<Uint8List> _readZipBytesFromPath(PlatformFile picked) async {
+    final path = picked.path;
+    if (path == null || path.trim().isEmpty) {
+      throw Exception(
+        'Dosya yolu alınamadı.\n'
+        'ZIP’i mümkünse Downloads içinden seçmeyi dene (Drive/Recent bazen path vermez).',
+      );
     }
-
-    // 3) stream varsa oku
-    if (picked.readStream != null) {
-      final chunks = <int>[];
-      await for (final data in picked.readStream!) {
-        chunks.addAll(data);
-      }
-      return Uint8List.fromList(chunks);
-    }
-
-    throw Exception(
-      'ZIP okunamadı: dosya yolu (path) ve bytes/stream alınamadı.\n'
-      'Not: Drive/Recent yerine Downloads içinden seçmeyi dene.',
-    );
+    return File(path).readAsBytes();
   }
 
   // ---------------- Hoca isteği: klasör seç -> ZIP oluştur ----------------
@@ -68,11 +58,9 @@ class _ImportProjectScreenState extends State<ImportProjectScreen> {
 
     final archive = Archive();
 
-    // recursive dosya gez
     await for (final entity in root.list(recursive: true, followLinks: false)) {
       if (entity is! File) continue;
 
-      // root'a göre relative path üret
       final rel = entity.path
           .substring(dirPath.length)
           .replaceFirst(RegExp(r'^[\\/]+'), '')
@@ -89,7 +77,8 @@ class _ImportProjectScreenState extends State<ImportProjectScreen> {
     if (zipped == null) throw Exception('ZIP oluşturulamadı');
 
     final tempDir = await getTemporaryDirectory();
-    final outFile = File('${tempDir.path}/$zipName.zip');
+    final safeName = zipName.trim().isEmpty ? 'project' : zipName.trim();
+    final outFile = File('${tempDir.path}/$safeName.zip');
     await outFile.writeAsBytes(zipped, flush: true);
 
     return outFile;
@@ -101,33 +90,32 @@ class _ImportProjectScreenState extends State<ImportProjectScreen> {
     required Uint8List zipBytes,
     required String fallbackName,
   }) async {
-    // zip aç
     final archive = ZipDecoder().decodeBytes(zipBytes);
 
-    // en üst klasör adı
     final projectName =
         _extractTopFolderName(archive) ?? _fallbackName(fallbackName);
 
-    // ✅ filtreli dil tespiti + istatistik
-    final stats = _languageStatsFromArchive(archive);
-    final primary = _pickPrimaryLanguage(stats);
+    // ✅ GitHub’a daha yakın: bytes bazlı dil yüzdesi
+    final statsBytes = _languageBytesFromArchive(archive);
+    final statsPercents = _bytesToPercents(statsBytes);
 
-    // firestore proje oluştur
+    // ✅ Flutter heuristics: pubspec.yaml varsa Dart diyebiliriz (çok mantıklı)
+    final isFlutter = _looksLikeFlutterProject(archive);
+
+    final primary = isFlutter ? 'Dart' : _pickPrimaryLanguage(statsPercents);
+
+    final totalFiles = _countFiles(archive);
+
     await _projectService.addProject(
       name: projectName,
       primaryLanguage: primary,
-      // Eğer ProjectService destekliyorsa:
-      // languageStats: _normalizePercents(stats),
     );
-
-    // ekranda göster (✅ filtreli dosya sayısı)
-    final totalFiles = _countFiles(archive);
 
     setState(() {
       _projectName = projectName;
       _primaryLanguage = primary;
       _fileCount = totalFiles;
-      _languageStats = stats;
+      _languageStats = statsPercents;
     });
 
     if (!mounted) return;
@@ -145,14 +133,13 @@ class _ImportProjectScreenState extends State<ImportProjectScreen> {
       final res = await FilePicker.platform.pickFiles(
         type: FileType.custom,
         allowedExtensions: const ['zip'],
-        withData: true, // ✅ bytes gelsin
-        withReadStream: true, // ✅ stream yedek olsun
+        withData: false, // ✅ RAM'e alma
       );
 
       if (res == null || res.files.isEmpty) return;
 
       final picked = res.files.single;
-      final zipBytes = await _readZipBytes(picked);
+      final zipBytes = await _readZipBytesFromPath(picked);
 
       await _importFromZipBytes(
         zipBytes: zipBytes,
@@ -172,15 +159,11 @@ class _ImportProjectScreenState extends State<ImportProjectScreen> {
     setState(() => _loading = true);
 
     try {
-      // ✅ klasör seç
       final dirPath = await FilePicker.platform.getDirectoryPath();
       if (dirPath == null || dirPath.trim().isEmpty) return;
 
-      final folderName = Directory(dirPath).uri.pathSegments.isNotEmpty
-          ? Directory(dirPath).uri.pathSegments.lastWhere((e) => e.isNotEmpty)
-          : 'project';
+      final folderName = _safeFolderNameFromPath(dirPath);
 
-      // ✅ klasörü zipleyip temp'e yaz
       final zipFile = await _zipDirectoryToTemp(
         dirPath: dirPath,
         zipName: folderName,
@@ -204,6 +187,15 @@ class _ImportProjectScreenState extends State<ImportProjectScreen> {
 
   // ---------------- helpers ----------------
 
+  String _safeFolderNameFromPath(String dirPath) {
+    final segments = Directory(dirPath).uri.pathSegments;
+    final last = segments.isNotEmpty
+        ? segments.lastWhere((e) => e.isNotEmpty, orElse: () => 'project')
+        : 'project';
+    final cleaned = last.trim();
+    return cleaned.isEmpty ? 'project' : cleaned;
+  }
+
   String _fallbackName(String fileName) {
     final lower = fileName.toLowerCase();
     return lower.endsWith('.zip')
@@ -220,6 +212,28 @@ class _ImportProjectScreenState extends State<ImportProjectScreen> {
       }
     }
     return null;
+  }
+
+  // ✅ Dil tespitinde SADECE gerçek kaynak kod klasörlerine bak
+  bool _isRelevantForLanguageDetection(String path) {
+    final p = path.replaceAll('\\', '/').toLowerCase();
+
+    if (p.startsWith('lib/')) return true;
+    if (p.startsWith('test/')) return true;
+    if (p.startsWith('tool/')) return true;
+    if (p.startsWith('bin/')) return true;
+    if (p.startsWith('web/')) return true;
+
+    return false; // android/ios/windows/macos/linux dahil değil
+  }
+
+  // ✅ Flutter tespiti (pubspec.yaml -> Dart ağırlıklı kabul)
+  bool _looksLikeFlutterProject(Archive archive) {
+    for (final f in archive) {
+      final name = f.name.replaceAll('\\', '/').toLowerCase();
+      if (name.endsWith('pubspec.yaml')) return true;
+    }
+    return false;
   }
 
   // ✅ "git/build/node_modules vs" filtre
@@ -312,7 +326,9 @@ class _ImportProjectScreenState extends State<ImportProjectScreen> {
     return c;
   }
 
-  Map<String, int> _languageStatsFromArchive(Archive archive) {
+  /// ✅ Dil tespiti: bytes bazlı (GitHub benzeri)
+  /// 🔥 Burada en kritik şey: android/ios/windows gibi klasörleri SAYMAMAK
+  Map<String, int> _languageBytesFromArchive(Archive archive) {
     final stats = <String, int>{
       'Dart': 0,
       'Java': 0,
@@ -327,54 +343,98 @@ class _ImportProjectScreenState extends State<ImportProjectScreen> {
     };
 
     for (final f in archive) {
-      final name = f.name.toLowerCase();
+      final name = f.name.replaceAll('\\', '/').toLowerCase();
       if (name.endsWith('/')) continue;
       if (_shouldIgnorePath(name)) continue;
 
+      // ✅ kritik filtre: sadece kaynak kod klasörleri
+      if (!_isRelevantForLanguageDetection(name)) continue;
+
+      final size = f.size;
+
       if (name.endsWith('.dart')) {
-        stats['Dart'] = stats['Dart']! + 1;
+        stats['Dart'] = stats['Dart']! + size;
       } else if (name.endsWith('.java')) {
-        stats['Java'] = stats['Java']! + 1;
+        stats['Java'] = stats['Java']! + size;
       } else if (name.endsWith('.kt')) {
-        stats['Kotlin'] = stats['Kotlin']! + 1;
+        stats['Kotlin'] = stats['Kotlin']! + size;
       } else if (name.endsWith('.py')) {
-        stats['Python'] = stats['Python']! + 1;
+        stats['Python'] = stats['Python']! + size;
       } else if (name.endsWith('.cs')) {
-        stats['C#'] = stats['C#']! + 1;
+        stats['C#'] = stats['C#']! + size;
       } else if (name.endsWith('.js')) {
-        stats['JavaScript'] = stats['JavaScript']! + 1;
+        stats['JavaScript'] = stats['JavaScript']! + size;
       } else if (name.endsWith('.ts')) {
-        stats['TypeScript'] = stats['TypeScript']! + 1;
+        stats['TypeScript'] = stats['TypeScript']! + size;
       } else if (name.endsWith('.c') ||
           name.endsWith('.cpp') ||
           name.endsWith('.h') ||
           name.endsWith('.hpp')) {
-        stats['C/C++'] = stats['C/C++']! + 1;
+        stats['C/C++'] = stats['C/C++']! + size;
       } else if (name.endsWith('.html')) {
-        stats['HTML'] = stats['HTML']! + 1;
+        stats['HTML'] = stats['HTML']! + size;
       } else if (name.endsWith('.css')) {
-        stats['CSS'] = stats['CSS']! + 1;
+        stats['CSS'] = stats['CSS']! + size;
       }
     }
 
-    stats.removeWhere((k, v) => v == 0);
+    stats.removeWhere((k, v) => v <= 0);
     return stats;
   }
 
-  String _pickPrimaryLanguage(Map<String, int> stats) {
-    if (stats.isEmpty) return 'Bilinmiyor';
+  /// Bytes -> yüzde (0..100). GitHub benzeri görünüm için.
+  Map<String, int> _bytesToPercents(Map<String, int> bytes) {
+    if (bytes.isEmpty) return {};
 
-    String best = stats.keys.first;
-    int bestVal = stats[best] ?? 0;
+    final total = bytes.values.fold<int>(0, (a, b) => a + b);
+    if (total <= 0) return {};
 
-    stats.forEach((k, v) {
+    final entries = bytes.entries.toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+
+    final percents = <String, int>{};
+    int sum = 0;
+
+    for (final e in entries) {
+      final p = ((e.value / total) * 100).round();
+      percents[e.key] = p;
+      sum += p;
+    }
+
+    if (percents.isNotEmpty && sum != 100) {
+      final topKey = entries.first.key;
+      percents[topKey] = (percents[topKey] ?? 0) + (100 - sum);
+      if ((percents[topKey] ?? 0) < 0) percents[topKey] = 0;
+    }
+
+    percents.removeWhere((k, v) => v <= 0);
+    return percents;
+  }
+
+  String _pickPrimaryLanguage(Map<String, int> percents) {
+    if (percents.isEmpty) return 'Bilinmiyor';
+
+    String best = percents.keys.first;
+    int bestVal = percents[best] ?? 0;
+
+    percents.forEach((k, v) {
       if (v > bestVal) {
         best = k;
         bestVal = v;
       }
     });
 
-    return bestVal == 0 ? 'Bilinmiyor' : best;
+    return bestVal <= 0 ? 'Bilinmiyor' : best;
+  }
+
+  String _formatLanguageBreakdown(Map<String, int>? stats, {int maxItems = 4}) {
+    if (stats == null || stats.isEmpty) return '-';
+
+    final entries = stats.entries.toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+
+    final top = entries.take(maxItems);
+    return top.map((e) => '${e.key} %${e.value}').join(' • ');
   }
 
   // ---------------- UI ----------------
@@ -440,7 +500,7 @@ class _ImportProjectScreenState extends State<ImportProjectScreen> {
                       ),
                       const SizedBox(height: 6),
                       Text(
-                        'Dil: ${_primaryLanguage ?? '-'}',
+                        'Primary: ${_primaryLanguage ?? '-'}',
                         style: const TextStyle(color: AppColors.textSoft),
                       ),
                       Text(
@@ -449,7 +509,7 @@ class _ImportProjectScreenState extends State<ImportProjectScreen> {
                       ),
                       const SizedBox(height: 10),
                       Text(
-                        'Dil dağılımı: ${_languageStats ?? {}}',
+                        'Dil dağılımı: ${_formatLanguageBreakdown(_languageStats)}',
                         style: const TextStyle(color: AppColors.textSoft),
                       ),
                     ],
