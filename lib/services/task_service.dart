@@ -31,7 +31,7 @@ class TaskService {
     final d = description?.trim();
 
     await _tasksRef(projectId).add({
-      // ✅ (Hocanın isteği) task içinde hangi projeye ait olduğu bilgisi
+      //  (Hocanın isteği) task içinde hangi projeye ait olduğu bilgisi
       'projectId': projectId,
 
       'title': t,
