@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:archive/archive.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 
@@ -32,17 +33,37 @@ class _ImportProjectScreenState extends State<ImportProjectScreen> {
 
   // ---------------- ZIP okuma ----------------
 
-  /// ✅ En stabil okuma: path üzerinden oku.
-  /// (withData=true kullanınca büyük ziplerde RAM patlayıp app kapanabiliyor)
-  Future<Uint8List> _readZipBytesFromPath(PlatformFile picked) async {
-    final path = picked.path;
-    if (path == null || path.trim().isEmpty) {
-      throw Exception(
-        'Dosya yolu alınamadı.\n'
-        'ZIP’i mümkünse Downloads içinden seçmeyi dene (Drive/Recent bazen path vermez).',
-      );
+  /// ✅ WEB: path yok => bytes kullan
+  /// ✅ Android/Desktop: path kullan (RAM patlamasın)
+  Future<Uint8List> _readZipBytesSmart(PlatformFile picked) async {
+    if (kIsWeb) {
+      final b = picked.bytes;
+      if (b == null) {
+        throw Exception(
+          'Web’de ZIP bytes alınamadı.\n'
+          'pickFiles içinde withData:true olmalı.',
+        );
+      }
+      return b;
     }
-    return File(path).readAsBytes();
+
+    final path = picked.path;
+    if (path != null && path.trim().isNotEmpty) {
+      return File(path).readAsBytes();
+    }
+
+    if (picked.readStream != null) {
+      final chunks = <int>[];
+      await for (final data in picked.readStream!) {
+        chunks.addAll(data);
+      }
+      return Uint8List.fromList(chunks);
+    }
+
+    throw Exception(
+      'ZIP okunamadı: path/bytes/stream alınamadı.\n'
+      'Not: Drive/Recent yerine Downloads içinden seçmeyi dene.',
+    );
   }
 
   // ---------------- Hoca isteği: klasör seç -> ZIP oluştur ----------------
@@ -99,9 +120,8 @@ class _ImportProjectScreenState extends State<ImportProjectScreen> {
     final statsBytes = _languageBytesFromArchive(archive);
     final statsPercents = _bytesToPercents(statsBytes);
 
-    // ✅ Flutter heuristics: pubspec.yaml varsa Dart diyebiliriz (çok mantıklı)
+    // ✅ Flutter heuristics: pubspec.yaml varsa Dart diyebiliriz
     final isFlutter = _looksLikeFlutterProject(archive);
-
     final primary = isFlutter ? 'Dart' : _pickPrimaryLanguage(statsPercents);
 
     final totalFiles = _countFiles(archive);
@@ -133,13 +153,16 @@ class _ImportProjectScreenState extends State<ImportProjectScreen> {
       final res = await FilePicker.platform.pickFiles(
         type: FileType.custom,
         allowedExtensions: const ['zip'],
-        withData: false, // ✅ RAM'e alma
+
+        // ✅ Web: bytes lazım | Android/Desktop: bytes alma (RAM)
+        withData: kIsWeb,
+        withReadStream: !kIsWeb,
       );
 
       if (res == null || res.files.isEmpty) return;
 
       final picked = res.files.single;
-      final zipBytes = await _readZipBytesFromPath(picked);
+      final zipBytes = await _readZipBytesSmart(picked);
 
       await _importFromZipBytes(
         zipBytes: zipBytes,
@@ -159,6 +182,7 @@ class _ImportProjectScreenState extends State<ImportProjectScreen> {
     setState(() => _loading = true);
 
     try {
+      // ⚠️ Web’de folder picking genelde stabil değil (tarayıcı kısıtları)
       final dirPath = await FilePicker.platform.getDirectoryPath();
       if (dirPath == null || dirPath.trim().isEmpty) return;
 
@@ -327,7 +351,7 @@ class _ImportProjectScreenState extends State<ImportProjectScreen> {
   }
 
   /// ✅ Dil tespiti: bytes bazlı (GitHub benzeri)
-  /// 🔥 Burada en kritik şey: android/ios/windows gibi klasörleri SAYMAMAK
+  /// 🔥 android/ios/windows gibi klasörleri SAYMAMAK için filtre var
   Map<String, int> _languageBytesFromArchive(Archive archive) {
     final stats = <String, int>{
       'Dart': 0,
