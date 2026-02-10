@@ -26,12 +26,36 @@ class _ProjectTasksScreenState extends State<ProjectTasksScreen> {
   String _sort = 'dueDate'; // 'dueDate' | 'priority'
   bool _desc = false;
 
+  // ✅ Şimdilik placeholder: LLM ekranını ekleyince burayı route edeceğiz.
+  void _handleAiAnalyze() {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('AI Analiz (yakında): ${widget.projectName}'),
+      ),
+    );
+
+    // TODO: LLM ekranı eklenince:
+    // Navigator.push(
+    //   context,
+    //   MaterialPageRoute(
+    //     builder: (_) => ProjectAiScreen(projectId: widget.projectId),
+    //   ),
+    // );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         backgroundColor: AppColors.navy,
         title: Text(widget.projectName),
+        actions: [
+          IconButton(
+            tooltip: 'AI Analiz Et',
+            onPressed: _handleAiAnalyze,
+            icon: const Icon(Icons.auto_awesome_outlined),
+          ),
+        ],
       ),
       floatingActionButton: FloatingActionButton(
         backgroundColor: AppColors.teal,
@@ -75,7 +99,7 @@ class _ProjectTasksScreenState extends State<ProjectTasksScreen> {
                   onPressed: () => setState(() => _desc = !_desc),
                   icon: Icon(_desc ? Icons.arrow_downward : Icons.arrow_upward),
                   color: AppColors.teal,
-                  tooltip: 'Artan/Azalan',
+                  tooltip: 'Artan/Azalansalan',
                 ),
               ],
             ),
@@ -109,14 +133,14 @@ class _ProjectTasksScreenState extends State<ProjectTasksScreen> {
                   }
 
                   return ListView.separated(
-                    padding: const EdgeInsets.only(bottom: 90), // ✅ eklendi
+                    padding: const EdgeInsets.only(bottom: 90),
                     itemCount: docs.length,
                     separatorBuilder: (_, __) => const SizedBox(height: 10),
                     itemBuilder: (context, i) {
                       final doc = docs[i];
                       final d = doc.data();
 
-                      final taskId = doc.id; // ✅ edit/delete için lazım
+                      final taskId = doc.id;
                       final title = (d['title'] ?? '') as String;
                       final description = d['description'] as String?;
                       final priority = (d['priority'] ?? 2) as int;

@@ -1,11 +1,11 @@
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 
 import '../theme/app_theme.dart';
-import 'login_screen.dart';
+import 'import_project_screen.dart';
 import 'projects_screen.dart';
-import 'import_project_screen.dart'; // ✅ EKLENDİ: Proje yükleme ekranı
 
 class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key});
@@ -52,18 +52,18 @@ class HomeScreen extends StatelessWidget {
     if (!ok) return;
 
     try {
-      await GoogleSignIn().signOut();
+      // Google ile giriş yaptıysan (özellikle web) signOut mantıklı.
+      // Email/Password girişinde zaten sadece FirebaseAuth.signOut yeter.
+      if (!kIsWeb) {
+        await GoogleSignIn().signOut();
+      }
     } catch (_) {}
 
     await FirebaseAuth.instance.signOut();
 
     if (!context.mounted) return;
 
-    Navigator.of(context).pushAndRemoveUntil(
-      MaterialPageRoute(builder: (_) => const LoginScreen()),
-      (_) => false,
-    );
-
+    // ✅ AuthGate otomatik LoginScreen'e döndürecek.
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('Çıkış yapıldı')),
     );
@@ -113,21 +113,18 @@ class HomeScreen extends StatelessWidget {
                 mainAxisSpacing: 12,
                 crossAxisSpacing: 12,
                 children: [
-                  // ✅ BURASI DEĞİŞTİ: Artık "Proje Yükle" ekrana gidiyor
                   _HomeCard(
                     title: 'Proje Yükle',
                     subtitle: 'ZIP seç → proje oluştur',
                     icon: Icons.upload_file,
                     onTap: () => _goTo(context, const ImportProjectScreen()),
                   ),
-
                   _HomeCard(
                     title: 'Projelerim',
                     subtitle: 'Proje seç / dil tespiti',
                     icon: Icons.folder_open,
-                    onTap: () => _goTo(context, ProjectsScreen()),
+                    onTap: () => _goTo(context, const ProjectsScreen()),
                   ),
-
                   _HomeCard(
                     title: 'Görevler',
                     subtitle: 'Task ekle / öncelik / bitiş',
@@ -136,12 +133,12 @@ class HomeScreen extends StatelessWidget {
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(
                           content: Text(
-                              'Görevler ekranını projeye bağlı olarak yapacağız.'),
+                            'Görevler ekranını projeye bağlı olarak yapacağız.',
+                          ),
                         ),
                       );
                     },
                   ),
-
                   _HomeCard(
                     title: 'Sıralama',
                     subtitle: 'Zaman / öncelik filtreleri',
@@ -149,8 +146,9 @@ class HomeScreen extends StatelessWidget {
                     onTap: () {
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(
-                          content:
-                              Text('Sıralama özelliği task listesinde olacak.'),
+                          content: Text(
+                            'Sıralama özelliği task listesinde olacak.',
+                          ),
                         ),
                       );
                     },

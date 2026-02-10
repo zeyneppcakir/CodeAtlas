@@ -1,11 +1,12 @@
 import 'package:flutter/material.dart';
+
 import '../theme/app_theme.dart';
 import '../services/task_service.dart';
+import '../services/ai_service.dart';
 
 class AddTaskScreen extends StatefulWidget {
   final String projectId;
 
-  // 👇 EDIT için opsiyonel alanlar
   final String? taskId;
   final String? initialTitle;
   final String? initialDescription;
@@ -29,11 +30,15 @@ class AddTaskScreen extends StatefulWidget {
 class _AddTaskScreenState extends State<AddTaskScreen> {
   final _titleCtrl = TextEditingController();
   final _descCtrl = TextEditingController();
+
   int _priority = 2;
   DateTime? _dueDate;
+
   bool _loading = false;
+  bool _aiLoading = false;
 
   final _service = TaskService();
+  final _ai = AIService();
 
   bool get _isEdit => widget.taskId != null;
 
@@ -41,7 +46,6 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
   void initState() {
     super.initState();
 
-    // 👇 Eğer edit modundaysa alanları doldur
     if (_isEdit) {
       _titleCtrl.text = widget.initialTitle ?? '';
       _descCtrl.text = widget.initialDescription ?? '';
@@ -81,24 +85,22 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
     setState(() => _loading = true);
 
     try {
+      final desc = _descCtrl.text.trim().isEmpty ? null : _descCtrl.text.trim();
+
       if (_isEdit) {
-        // ✅ UPDATE
         await _service.updateTask(
           projectId: widget.projectId,
           taskId: widget.taskId!,
           title: title,
-          description:
-              _descCtrl.text.trim().isEmpty ? null : _descCtrl.text.trim(),
+          description: desc,
           priority: _priority,
           dueDate: _dueDate!,
         );
       } else {
-        // ✅ ADD
         await _service.addTask(
           projectId: widget.projectId,
           title: title,
-          description:
-              _descCtrl.text.trim().isEmpty ? null : _descCtrl.text.trim(),
+          description: desc,
           priority: _priority,
           dueDate: _dueDate!,
         );
@@ -113,6 +115,95 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
       );
     } finally {
       if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  // ---------------- AI kısmı ----------------
+
+  List<String> _parseTaskTitles(String raw) {
+    final lines = raw
+        .split('\n')
+        .map((e) => e.trim())
+        .where((e) => e.isNotEmpty)
+        .toList();
+
+    final out = <String>[];
+    final bullet = RegExp(r'^(\s*[-*•]|\s*\d+[.)])\s*');
+
+    for (final l in lines) {
+      final cleaned = l.replaceFirst(bullet, '').trim();
+      if (cleaned.length < 3) continue;
+      out.add(cleaned);
+      if (out.length >= 10) break;
+    }
+
+    final uniq = <String>{};
+    return out.where((t) => uniq.add(t.toLowerCase())).toList();
+  }
+
+  Future<void> _aiSuggestTasksAndAdd() async {
+    if (_aiLoading || _loading) return;
+
+    setState(() => _aiLoading = true);
+
+    try {
+      final note = _descCtrl.text.trim().isEmpty ? '-' : _descCtrl.text.trim();
+      final draft =
+          _titleCtrl.text.trim().isEmpty ? '-' : _titleCtrl.text.trim();
+
+      final prompt = '''
+Sen bir yazılım proje asistanısın.
+Aşağıdaki proje için 5-7 adet yapılabilir görev öner.
+Sadece görev başlıklarını yaz (her satırda 1 görev). Açıklama yazma.
+
+Proje bilgisi:
+- Proje ID: ${widget.projectId}
+- Not: $note
+- Taslak başlık: $draft
+''';
+
+      // 🔥 DOĞRU ÇAĞRI
+      final raw = await _ai.generateTaskSuggestions(prompt: prompt);
+
+      if (!mounted) return;
+
+      final titles = _parseTaskTitles(raw);
+
+      if (titles.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('AI görev üretemedi. Çıktı: $raw')),
+        );
+        return;
+      }
+
+      final now = DateTime.now();
+      int k = 0;
+
+      for (final t in titles.take(5)) {
+        final due = now.add(Duration(days: 7 * (k + 1)));
+        await _service.addTask(
+          projectId: widget.projectId,
+          title: t,
+          description: null,
+          priority: 2,
+          dueDate: due,
+        );
+        k++;
+      }
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('AI görevler eklendi ✅')),
+      );
+
+      Navigator.pop(context);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('AI hata: $e')),
+      );
+    } finally {
+      if (mounted) setState(() => _aiLoading = false);
     }
   }
 
@@ -169,14 +260,37 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
                 label: Text(dueText),
               ),
             ),
-            const SizedBox(height: 20),
+            const SizedBox(height: 16),
+            SizedBox(
+              width: double.infinity,
+              height: 46,
+              child: OutlinedButton.icon(
+                onPressed: (_isEdit || _aiLoading || _loading)
+                    ? null
+                    : _aiSuggestTasksAndAdd,
+                icon: _aiLoading
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.smart_toy),
+                label:
+                    Text(_aiLoading ? 'AI düşünüyor...' : 'AI’dan Task Öner'),
+              ),
+            ),
+            const SizedBox(height: 12),
             SizedBox(
               width: double.infinity,
               height: 48,
               child: ElevatedButton(
                 onPressed: _loading ? null : _save,
                 child: _loading
-                    ? const CircularProgressIndicator()
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
                     : Text(_isEdit ? 'Güncelle' : 'Kaydet'),
               ),
             ),
