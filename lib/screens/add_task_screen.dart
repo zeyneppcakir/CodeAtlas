@@ -118,7 +118,25 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
     }
   }
 
-  // ---------------- AI kısmı ----------------
+  // ---------------- AI kısmı (Öner -> Seç -> Ekle) ----------------
+
+  String _cleanupTr(String s) {
+    var x = s;
+    x = x.replaceAll(RegExp(r'\s+'), ' ').trim();
+
+    final map = <String, String>{
+      'avtorizasyon': 'yetkilendirme',
+      'autorizasyon': 'yetkilendirme',
+      'authorization': 'yetkilendirme',
+      'token sisteminin geliştirisidir': 'token sistemini geliştirme',
+    };
+
+    map.forEach((k, v) {
+      x = x.replaceAll(RegExp(k, caseSensitive: false), v);
+    });
+
+    return x;
+  }
 
   List<String> _parseTaskTitles(String raw) {
     final lines = raw
@@ -131,14 +149,51 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
     final bullet = RegExp(r'^(\s*[-*•]|\s*\d+[.)])\s*');
 
     for (final l in lines) {
-      final cleaned = l.replaceFirst(bullet, '').trim();
+      final cleaned = _cleanupTr(l.replaceFirst(bullet, '').trim());
       if (cleaned.length < 3) continue;
-      out.add(cleaned);
-      if (out.length >= 10) break;
+
+      final short =
+          cleaned.length > 80 ? cleaned.substring(0, 80).trim() : cleaned;
+
+      out.add(short);
+      if (out.length >= 12) break;
     }
 
     final uniq = <String>{};
     return out.where((t) => uniq.add(t.toLowerCase())).toList();
+  }
+
+  String _buildPrompt() {
+    final note = _descCtrl.text.trim().isEmpty ? '-' : _descCtrl.text.trim();
+    final draft = _titleCtrl.text.trim().isEmpty ? '-' : _titleCtrl.text.trim();
+
+    return '''
+Sen Türkçe yazan kıdemli bir yazılım proje asistanısın.
+
+Görev: Aşağıdaki konu için 5-7 adet yapılabilir görev öner.
+Kurallar:
+- SADECE görev başlıklarını yaz.
+- Her satırda 1 görev olsun.
+- Türkçe dilbilgisi düzgün olsun. Uydurma kelime üretme.
+- Kısa ve net olsun (maks 8-10 kelime).
+- İngilizce teknik terim gerekiyorsa parantez içinde ver: (auth), (token), (Firestore) gibi.
+- Gereksiz süslü cümle yazma.
+
+Bağlam: Flutter (web) + Firebase Auth + Firestore.
+
+Proje:
+- Proje ID: ${widget.projectId}
+- Kullanıcı notu: $note
+- Konu / taslak başlık: "$draft"
+''';
+  }
+
+  Future<List<String>> _fetchAiTitles() async {
+    final raw = await _ai.generateTaskSuggestions(
+      prompt: _buildPrompt(),
+      model: 'qwen2.5:3b',
+    );
+    return _parseTaskTitles(raw);
   }
 
   Future<void> _aiSuggestTasksAndAdd() async {
@@ -147,60 +202,215 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
     setState(() => _aiLoading = true);
 
     try {
-      final note = _descCtrl.text.trim().isEmpty ? '-' : _descCtrl.text.trim();
-      final draft =
-          _titleCtrl.text.trim().isEmpty ? '-' : _titleCtrl.text.trim();
-
-      final prompt = '''
-Sen bir yazılım proje asistanısın.
-Aşağıdaki proje için 5-7 adet yapılabilir görev öner.
-Sadece görev başlıklarını yaz (her satırda 1 görev). Açıklama yazma.
-
-Proje bilgisi:
-- Proje ID: ${widget.projectId}
-- Not: $note
-- Taslak başlık: $draft
-''';
-
-      // 🔥 DOĞRU ÇAĞRI
-      final raw = await _ai.generateTaskSuggestions(prompt: prompt);
+      // 1) İlk önerileri çek
+      var titles = await _fetchAiTitles();
 
       if (!mounted) return;
 
-      final titles = _parseTaskTitles(raw);
-
       if (titles.isEmpty) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('AI görev üretemedi. Çıktı: $raw')),
+          const SnackBar(content: Text('AI görev üretemedi.')),
         );
         return;
       }
 
+      // 2) Dialog state’i
+      final selected = <int>{};
+      bool dialogLoading = false;
+
+      final ok = await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder: (ctx) {
+          return StatefulBuilder(
+            builder: (ctx, setLocal) {
+              final allSelected = selected.length == titles.length;
+
+              Future<void> onRefresh() async {
+                if (dialogLoading) return;
+
+                setLocal(() => dialogLoading = true);
+                try {
+                  final newTitles = await _fetchAiTitles();
+
+                  if (newTitles.isEmpty) {
+                    // ✅ dialog context ile snackbar
+                    ScaffoldMessenger.of(ctx).showSnackBar(
+                      const SnackBar(
+                        content:
+                            Text('Yeni öneri gelmedi. Mevcut liste korunuyor.'),
+                      ),
+                    );
+                  }
+
+                  setLocal(() {
+                    if (newTitles.isNotEmpty) titles = newTitles;
+                    selected.clear(); // yenileyince seçim sıfırlansın
+                  });
+                } catch (_) {
+                  ScaffoldMessenger.of(ctx).showSnackBar(
+                    const SnackBar(
+                      content: Text('Yenileme başarısız. Ollama çalışıyor mu?'),
+                    ),
+                  );
+                } finally {
+                  setLocal(() => dialogLoading = false);
+                }
+              }
+
+              return AlertDialog(
+                title: const Text('AI Görev Önerileri'),
+                content: SizedBox(
+                  width: 460,
+                  child: SingleChildScrollView(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Text(
+                          'Eklemek istediklerini işaretle:',
+                          style: TextStyle(color: AppColors.textSoft),
+                        ),
+                        const SizedBox(height: 10),
+                        Row(
+                          children: [
+                            TextButton.icon(
+                              onPressed: dialogLoading
+                                  ? null
+                                  : () {
+                                      setLocal(() {
+                                        selected.clear();
+                                        if (!allSelected) {
+                                          for (int i = 0;
+                                              i < titles.length;
+                                              i++) {
+                                            selected.add(i);
+                                          }
+                                        }
+                                      });
+                                    },
+                              icon: Icon(
+                                allSelected
+                                    ? Icons.clear_all
+                                    : Icons.select_all,
+                              ),
+                              label:
+                                  Text(allSelected ? 'Temizle' : 'Hepsini seç'),
+                            ),
+                            const Spacer(),
+                            Text(
+                              '${selected.length}/${titles.length}',
+                              style: const TextStyle(color: AppColors.textSoft),
+                            ),
+                          ],
+                        ),
+
+                        // ✅ Yenile butonu
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: TextButton.icon(
+                            onPressed: dialogLoading ? null : onRefresh,
+                            icon: dialogLoading
+                                ? const SizedBox(
+                                    width: 16,
+                                    height: 16,
+                                    child: CircularProgressIndicator(
+                                        strokeWidth: 2),
+                                  )
+                                : const Icon(Icons.refresh),
+                            label: Text(
+                              dialogLoading
+                                  ? 'Yenileniyor...'
+                                  : 'Yenile (Yeni öneri al)',
+                            ),
+                          ),
+                        ),
+
+                        const Divider(),
+
+                        ...List.generate(titles.length, (i) {
+                          final checked = selected.contains(i);
+                          return CheckboxListTile(
+                            value: checked,
+                            onChanged: dialogLoading
+                                ? null
+                                : (v) {
+                                    setLocal(() {
+                                      if (v == true) {
+                                        selected.add(i);
+                                      } else {
+                                        selected.remove(i);
+                                      }
+                                    });
+                                  },
+                            title: Text(titles[i]),
+                            controlAffinity: ListTileControlAffinity.leading,
+                            dense: true,
+                          );
+                        }),
+                      ],
+                    ),
+                  ),
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(ctx, false),
+                    child: const Text('Vazgeç'),
+                  ),
+                  FilledButton(
+                    onPressed: (selected.isEmpty || dialogLoading)
+                        ? null
+                        : () => Navigator.pop(ctx, true),
+                    child: Text('Ekle (${selected.length})'),
+                  ),
+                ],
+              );
+            },
+          );
+        },
+      );
+
+      // 3) Vazgeç / seçilmedi
+      if (ok != true || selected.isEmpty) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('İptal edildi')),
+        );
+        return;
+      }
+
+      // 4) Seçilenleri ekle
       final now = DateTime.now();
       int k = 0;
+      final sorted = selected.toList()..sort();
 
-      for (final t in titles.take(5)) {
+      for (final i in sorted) {
         final due = now.add(Duration(days: 7 * (k + 1)));
         await _service.addTask(
           projectId: widget.projectId,
-          title: t,
+          title: titles[i],
           description: null,
-          priority: 2,
+          priority: _priority, // ✅ kullanıcı seçimi
           dueDate: due,
+          status: 'todo',
+          aiGenerated: true, // ✅ AI etiketi çıksın
+          // ai: {'source': 'ollama', 'model': 'qwen2.5:3b'}  // istersen meta da tut
         );
         k++;
       }
 
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('AI görevler eklendi ✅')),
+        SnackBar(content: Text('${selected.length} task eklendi ✅')),
       );
-
-      Navigator.pop(context);
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('AI hata: $e')),
+        SnackBar(
+          content: Text(
+            'AI hata: $e\n'
+            'Kontrol: Ollama açık mı? (http://127.0.0.1:11434/api/tags)',
+          ),
+        ),
       );
     } finally {
       if (mounted) setState(() => _aiLoading = false);
@@ -261,6 +471,8 @@ Proje bilgisi:
               ),
             ),
             const SizedBox(height: 16),
+
+            // AI Butonu (edit modunda kapalı)
             SizedBox(
               width: double.infinity,
               height: 46,
@@ -279,6 +491,7 @@ Proje bilgisi:
                     Text(_aiLoading ? 'AI düşünüyor...' : 'AI’dan Task Öner'),
               ),
             ),
+
             const SizedBox(height: 12),
             SizedBox(
               width: double.infinity,

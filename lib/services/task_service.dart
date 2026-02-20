@@ -19,6 +19,28 @@ class TaskService {
     return _db.collection('projects').doc(pid).collection('tasks');
   }
 
+  // ✅ activity log koleksiyonu
+  CollectionReference<Map<String, dynamic>> _logsRef(String projectId) {
+    final pid = projectId.trim();
+    if (pid.isEmpty) throw Exception('ProjectId boş olamaz.');
+    return _db.collection('projects').doc(pid).collection('activity_logs');
+  }
+
+  // ✅ status doğrulama
+  String _cleanStatus(String status) {
+    final s = status.trim().toLowerCase();
+    if (s != 'todo' && s != 'doing' && s != 'done') {
+      throw Exception('Geçersiz status: $status (todo/doing/done olmalı)');
+    }
+    return s;
+  }
+
+  int _cleanPriority(int p) {
+    if (p < 1) return 1;
+    if (p > 3) return 3;
+    return p;
+  }
+
   String _cleanTitle(String title) {
     final t = title.trim();
     if (t.isEmpty) throw Exception('Task başlığı boş olamaz.');
@@ -31,6 +53,32 @@ class TaskService {
     return d;
   }
 
+  // ✅ activity log yazıcı (log hatası uygulamayı kırmasın)
+  Future<void> _log({
+    required String projectId,
+    required String action,
+    String? taskId,
+    String? taskTitle,
+    Map<String, dynamic>? meta,
+  }) async {
+    try {
+      final uid = _auth.currentUser?.uid; // log için daha güvenli
+      if (uid == null) return;
+
+      await _logsRef(projectId).add({
+        'action': action, // created/updated/deleted/status_changed/ai_generated
+        if (taskId != null) 'taskId': taskId,
+        if (taskTitle != null && taskTitle.trim().isNotEmpty)
+          'taskTitle': taskTitle.trim(),
+        'userId': uid,
+        if (meta != null) 'meta': meta,
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+    } catch (_) {
+      // sessiz geç
+    }
+  }
+
   // -------------------------
   // CREATE
   // -------------------------
@@ -40,29 +88,40 @@ class TaskService {
     String? description,
     required int priority,
     required DateTime dueDate,
+    String status = 'todo',
+    Map<String, dynamic>? ai,
+    bool aiGenerated = false,
   }) async {
-    final uid = _uid;
     final pid = projectId.trim();
     final t = _cleanTitle(title);
     final d = _cleanDescription(description);
+    final s = _cleanStatus(status);
+    final pr = _cleanPriority(priority);
 
     try {
-      await _tasksRef(pid).add({
-        // (Hocanın isteği) task içinde hangi projeye ait olduğu bilgisi
+      final uid = _uid;
+
+      final doc = await _tasksRef(pid).add({
         'projectId': pid,
-
         'title': t,
-        'description': d, // null olabilir -> temiz
-
-        'priority': priority,
+        'description': d,
+        'priority': pr,
         'dueDate': Timestamp.fromDate(dueDate),
-
-        // task'ı kim oluşturdu (rules/izleme için faydalı)
+        'status': s,
+        if (ai != null) 'ai': ai,
+        'aiGenerated': aiGenerated,
         'ownerId': uid,
-
         'createdAt': FieldValue.serverTimestamp(),
         'updatedAt': FieldValue.serverTimestamp(),
       });
+
+      await _log(
+        projectId: pid,
+        action: 'created',
+        taskId: doc.id,
+        taskTitle: t,
+        meta: {'status': s, 'aiGenerated': aiGenerated, 'priority': pr},
+      );
     } on FirebaseException catch (e) {
       throw Exception('Firestore hata: ${e.message ?? e.code}');
     }
@@ -85,22 +144,31 @@ class TaskService {
 
     final t = _cleanTitle(title);
     final d = _cleanDescription(description);
+    final pr = _cleanPriority(priority);
 
     try {
       await _tasksRef(pid).doc(tid).update({
         'title': t,
-        'description': d, // null olabilir
-        'priority': priority,
+        'description': d,
+        'priority': pr,
         'dueDate': Timestamp.fromDate(dueDate),
         'updatedAt': FieldValue.serverTimestamp(),
       });
+
+      await _log(
+        projectId: pid,
+        action: 'updated',
+        taskId: tid,
+        taskTitle: t,
+        meta: {'priority': pr},
+      );
     } on FirebaseException catch (e) {
       throw Exception('Firestore hata: ${e.message ?? e.code}');
     }
   }
 
   // -------------------------
-  // UPDATE (partial) - LLM için çok işe yarar
+  // UPDATE (partial)
   // -------------------------
   Future<void> updateTaskFields({
     required String projectId,
@@ -109,6 +177,8 @@ class TaskService {
     String? description,
     int? priority,
     DateTime? dueDate,
+    String? status,
+    Map<String, dynamic>? ai,
   }) async {
     final pid = projectId.trim();
     final tid = taskId.trim();
@@ -119,17 +189,95 @@ class TaskService {
     };
 
     if (title != null) data['title'] = _cleanTitle(title);
+
     if (description != null) {
-      // description paramı geldi demek: boşsa null’a çekebiliriz
+      // description paramı geldiyse: boşsa null'a çek
       data['description'] = _cleanDescription(description);
     }
-    if (priority != null) data['priority'] = priority;
+
+    if (priority != null) data['priority'] = _cleanPriority(priority);
     if (dueDate != null) data['dueDate'] = Timestamp.fromDate(dueDate);
 
-    if (data.length == 1) return; // sadece updatedAt var -> boş update yapma
+    if (status != null) data['status'] = _cleanStatus(status);
+    if (ai != null) data['ai'] = ai;
+
+    if (data.length == 1) return; // sadece updatedAt -> boş update yok
 
     try {
       await _tasksRef(pid).doc(tid).update(data);
+
+      await _log(
+        projectId: pid,
+        action: 'updated',
+        taskId: tid,
+        taskTitle: title, // null olabilir
+        meta: {
+          if (status != null) 'status': status,
+          if (priority != null) 'priority': _cleanPriority(priority),
+          if (ai != null) 'aiUpdated': true,
+        },
+      );
+    } on FirebaseException catch (e) {
+      throw Exception('Firestore hata: ${e.message ?? e.code}');
+    }
+  }
+
+  // ✅ status değiştir
+  Future<void> setStatus({
+    required String projectId,
+    required String taskId,
+    required String status,
+    String? taskTitle,
+  }) async {
+    final pid = projectId.trim();
+    final tid = taskId.trim();
+    if (tid.isEmpty) throw Exception('TaskId boş olamaz.');
+
+    final s = _cleanStatus(status);
+
+    try {
+      await _tasksRef(pid).doc(tid).update({
+        'status': s,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+
+      await _log(
+        projectId: pid,
+        action: 'status_changed',
+        taskId: tid,
+        taskTitle: taskTitle,
+        meta: {'status': s},
+      );
+    } on FirebaseException catch (e) {
+      throw Exception('Firestore hata: ${e.message ?? e.code}');
+    }
+  }
+
+  // ✅ LLM üretti: ai + aiGenerated
+  Future<void> markAiGenerated({
+    required String projectId,
+    required String taskId,
+    required Map<String, dynamic> ai,
+    String? taskTitle,
+  }) async {
+    final pid = projectId.trim();
+    final tid = taskId.trim();
+    if (tid.isEmpty) throw Exception('TaskId boş olamaz.');
+
+    try {
+      await _tasksRef(pid).doc(tid).update({
+        'ai': ai,
+        'aiGenerated': true,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+
+      await _log(
+        projectId: pid,
+        action: 'ai_generated',
+        taskId: tid,
+        taskTitle: taskTitle,
+        meta: {'aiGenerated': true},
+      );
     } on FirebaseException catch (e) {
       throw Exception('Firestore hata: ${e.message ?? e.code}');
     }
@@ -141,6 +289,7 @@ class TaskService {
   Future<void> deleteTask({
     required String projectId,
     required String taskId,
+    String? taskTitle,
   }) async {
     final pid = projectId.trim();
     final tid = taskId.trim();
@@ -148,6 +297,13 @@ class TaskService {
 
     try {
       await _tasksRef(pid).doc(tid).delete();
+
+      await _log(
+        projectId: pid,
+        action: 'deleted',
+        taskId: tid,
+        taskTitle: taskTitle,
+      );
     } on FirebaseException catch (e) {
       throw Exception('Firestore hata: ${e.message ?? e.code}');
     }
@@ -160,29 +316,38 @@ class TaskService {
     required String projectId,
     required String orderByField,
     required bool descending,
+    String? statusFilter, // all/todo/doing/done
   }) {
     final pid = projectId.trim();
 
-    // küçük koruma: yanlış field gelirse dueDate'e düş
     final safeOrder = (orderByField == 'dueDate' || orderByField == 'priority')
         ? orderByField
         : 'dueDate';
 
-    return _tasksRef(pid)
-        .orderBy(safeOrder, descending: descending)
-        .snapshots();
+    Query<Map<String, dynamic>> q =
+        _tasksRef(pid).orderBy(safeOrder, descending: descending);
+
+    final sf = statusFilter?.trim().toLowerCase();
+    if (sf != null && sf.isNotEmpty && sf != 'all') {
+      q = q.where('status', isEqualTo: _cleanStatus(sf));
+      // Not: Firestore index isteyebilir -> console linki çıkar
+    }
+
+    return q.snapshots();
   }
 
   // -------------------------
-  // READ ONCE (LLM için lazım)
+  // READ ONCE
   // -------------------------
   Future<List<QueryDocumentSnapshot<Map<String, dynamic>>>> getTasksOnce({
     required String projectId,
     String orderByField = 'dueDate',
     bool descending = false,
     int? limit,
+    String? statusFilter,
   }) async {
     final pid = projectId.trim();
+
     final safeOrder = (orderByField == 'dueDate' || orderByField == 'priority')
         ? orderByField
         : 'dueDate';
@@ -190,6 +355,12 @@ class TaskService {
     try {
       Query<Map<String, dynamic>> q =
           _tasksRef(pid).orderBy(safeOrder, descending: descending);
+
+      final sf = statusFilter?.trim().toLowerCase();
+      if (sf != null && sf.isNotEmpty && sf != 'all') {
+        q = q.where('status', isEqualTo: _cleanStatus(sf));
+      }
+
       if (limit != null && limit > 0) q = q.limit(limit);
 
       final snap = await q.get();
@@ -197,5 +368,17 @@ class TaskService {
     } on FirebaseException catch (e) {
       throw Exception('Firestore hata: ${e.message ?? e.code}');
     }
+  }
+
+  // ✅ activity logs stream
+  Stream<QuerySnapshot<Map<String, dynamic>>> logsStream({
+    required String projectId,
+    int limit = 50,
+  }) {
+    final pid = projectId.trim();
+    return _logsRef(pid)
+        .orderBy('createdAt', descending: true)
+        .limit(limit)
+        .snapshots();
   }
 }

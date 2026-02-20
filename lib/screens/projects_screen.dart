@@ -61,9 +61,6 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
     }
   }
 
-  /// Firestore’dan gelen languageStats (Map) içinden
-  /// GitHub benzeri kısa özet üretir: "Dart %92 • HTML %8"
-  /// - primary dil zaten üstte gösterildiği için, burada istersek primary'i çıkarabiliriz.
   String _formatLanguageBreakdown(
     dynamic rawStats, {
     String? primaryLang,
@@ -87,13 +84,12 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
 
     if (entries.isEmpty) return '';
 
-    // büyükten küçüğe
     entries.sort((a, b) => b.value.compareTo(a.value));
 
-    // primary dili breakdown'dan çıkar (tekrarı azaltmak için)
     if (primaryLang != null && primaryLang.trim().isNotEmpty) {
-      entries
-          .removeWhere((e) => e.key.toLowerCase() == primaryLang.toLowerCase());
+      entries.removeWhere(
+        (e) => e.key.toLowerCase() == primaryLang.toLowerCase(),
+      );
     }
 
     if (entries.isEmpty) return '';
@@ -107,6 +103,39 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
       context,
       MaterialPageRoute(builder: (_) => const ImportProjectScreen()),
     );
+  }
+
+  void _handleAiAnalyze({
+    required String projectId,
+    required String projectName,
+  }) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('AI Analiz (yakında): $projectName'),
+      ),
+    );
+  }
+
+  Future<void> _openProjectTasks({
+    required String projectId,
+    required String projectName,
+  }) async {
+    try {
+      await Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => ProjectTasksScreen(
+            projectId: projectId,
+            projectName: projectName,
+          ),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Sayfa açılamadı: $e')),
+      );
+    }
   }
 
   @override
@@ -186,7 +215,6 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
             );
           }
 
-          // ✅ Opsiyonel: aynı isim + dil kombinasyonunu tek göster
           final seen = <String>{};
           final filteredDocs = <QueryDocumentSnapshot<Map<String, dynamic>>>[];
           for (final d in docs) {
@@ -208,7 +236,6 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
 
               final projectId = doc.id;
               final name = (data['name'] ?? '') as String;
-
               final primaryLang = (data['primaryLanguage'] ?? '-') as String;
 
               final breakdown = _formatLanguageBreakdown(
@@ -248,6 +275,14 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
                       PopupMenuButton<String>(
                         tooltip: 'Seçenekler',
                         onSelected: (value) async {
+                          if (value == 'ai') {
+                            _handleAiAnalyze(
+                              projectId: projectId,
+                              projectName: name,
+                            );
+                            return;
+                          }
+
                           if (value == 'delete') {
                             await _handleDelete(
                               projectId: projectId,
@@ -256,6 +291,16 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
                           }
                         },
                         itemBuilder: (context) => const [
+                          PopupMenuItem(
+                            value: 'ai',
+                            child: Row(
+                              children: [
+                                Icon(Icons.auto_awesome_outlined),
+                                SizedBox(width: 10),
+                                Text('AI Analiz Et'),
+                              ],
+                            ),
+                          ),
                           PopupMenuItem(
                             value: 'delete',
                             child: Row(
@@ -271,17 +316,10 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
                       const Icon(Icons.chevron_right),
                     ],
                   ),
-                  onTap: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => ProjectTasksScreen(
-                          projectId: projectId,
-                          projectName: name,
-                        ),
-                      ),
-                    );
-                  },
+                  onTap: () => _openProjectTasks(
+                    projectId: projectId,
+                    projectName: name,
+                  ),
                 ),
               );
             },
