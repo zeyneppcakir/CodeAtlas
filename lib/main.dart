@@ -1,15 +1,23 @@
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 
 import 'firebase_options.dart';
 import 'screens/home_screen.dart';
 import 'screens/login_screen.dart';
 import 'theme/app_theme.dart';
 
+final GlobalKey<NavigatorState> navKey = GlobalKey<NavigatorState>();
+final GlobalKey<ScaffoldMessengerState> messengerKey =
+    GlobalKey<ScaffoldMessengerState>();
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+
+  await Firebase.initializeApp(
+    options: DefaultFirebaseOptions.currentPlatform,
+  );
+
   runApp(const CodeAtlasApp());
 }
 
@@ -21,7 +29,11 @@ class CodeAtlasApp extends StatelessWidget {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'CodeAtlas',
-      theme: AppTheme.darkTheme, // sende koyu tema var diye böyle bıraktım
+      theme: AppTheme.darkTheme,
+      navigatorKey: navKey,
+      scaffoldMessengerKey: messengerKey,
+      // Eğer AppTheme.darkTheme Material3 içermiyorsa burada da açabiliriz:
+      // theme: AppTheme.darkTheme.copyWith(useMaterial3: true),
       home: const AuthGate(),
     );
   }
@@ -37,7 +49,6 @@ class AuthGate extends StatelessWidget {
     return StreamBuilder<User?>(
       stream: FirebaseAuth.instance.authStateChanges(),
       builder: (context, snapshot) {
-        // İlk anda bağlantı beklerken
         if (snapshot.connectionState == ConnectionState.waiting) {
           return const Scaffold(
             body: Center(child: CircularProgressIndicator()),
