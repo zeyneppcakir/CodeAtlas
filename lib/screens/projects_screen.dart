@@ -1,10 +1,11 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 
-import '../theme/app_theme.dart';
-import '../services/project_service.dart';
-import 'import_project_screen.dart';
-import 'project_tasks_screen.dart';
+import 'package:codeatlas/theme/app_theme.dart';
+import 'package:codeatlas/services/project_service.dart';
+import 'package:codeatlas/screens/analysis_menu_screen.dart';
+import 'package:codeatlas/screens/import_project_screen.dart';
+import 'package:codeatlas/screens/project_tasks_screen.dart';
 
 class ProjectsScreen extends StatefulWidget {
   const ProjectsScreen({super.key});
@@ -15,6 +16,11 @@ class ProjectsScreen extends StatefulWidget {
 
 class _ProjectsScreenState extends State<ProjectsScreen> {
   final _service = ProjectService();
+
+  String _safeText(dynamic v, String fallback) {
+    final s = (v ?? '').toString().trim();
+    return s.isEmpty ? fallback : s;
+  }
 
   Future<bool> _confirmDelete(BuildContext context, String projectName) async {
     return await showDialog<bool>(
@@ -83,7 +89,6 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
     });
 
     if (entries.isEmpty) return '';
-
     entries.sort((a, b) => b.value.compareTo(a.value));
 
     if (primaryLang != null && primaryLang.trim().isNotEmpty) {
@@ -110,9 +115,7 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
     required String projectName,
   }) {
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('AI Analiz (yakında): $projectName'),
-      ),
+      SnackBar(content: Text('AI Analiz (yakında): $projectName')),
     );
   }
 
@@ -120,30 +123,64 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
     required String projectId,
     required String projectName,
   }) async {
-    try {
-      await Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (_) => ProjectTasksScreen(
-            projectId: projectId,
-            projectName: projectName,
-          ),
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ProjectTasksScreen(
+          projectId: projectId,
+          projectName: projectName,
         ),
-      );
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Sayfa açılamadı: $e')),
-      );
-    }
+      ),
+    );
+  }
+
+  Future<void> _openAnalysisMenu({
+    required String projectId,
+    required String projectName,
+  }) async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => AnalysisMenuScreen(
+          projectId: projectId,
+          projectName: projectName,
+        ),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
+    debugPrint('>>> ProjectsScreen BUILD (NEW TEST)');
+
     return Scaffold(
       appBar: AppBar(
         backgroundColor: AppColors.navy,
-        title: const Text('Projelerim'),
+        title: const Text('Projelerim (NEW)'),
+        actions: const [
+          Padding(
+            padding: EdgeInsets.only(right: 12),
+            child: Center(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: Colors.orange,
+                  borderRadius: BorderRadius.all(Radius.circular(999)),
+                ),
+                child: Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  child: Text(
+                    'NEW',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w800,
+                      color: Colors.black,
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
       floatingActionButton: FloatingActionButton(
         backgroundColor: AppColors.teal,
@@ -180,49 +217,13 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
 
           final docs = snapshot.data!.docs;
 
-          if (docs.isEmpty) {
-            return Center(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Icon(Icons.folder_open, size: 44),
-                    const SizedBox(height: 10),
-                    const Text(
-                      'Henüz proje yok.',
-                      style: TextStyle(color: AppColors.textSoft, fontSize: 16),
-                    ),
-                    const SizedBox(height: 6),
-                    const Text(
-                      'ZIP yükleyerek proje ekleyebilirsin.',
-                      style: TextStyle(color: AppColors.textSoft),
-                      textAlign: TextAlign.center,
-                    ),
-                    const SizedBox(height: 14),
-                    SizedBox(
-                      width: double.infinity,
-                      height: 46,
-                      child: ElevatedButton.icon(
-                        onPressed: _openImport,
-                        icon: const Icon(Icons.upload_file),
-                        label: const Text('ZIP Yükle'),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            );
-          }
-
           final seen = <String>{};
           final filteredDocs = <QueryDocumentSnapshot<Map<String, dynamic>>>[];
           for (final d in docs) {
             final data = d.data();
-            final name = (data['name'] ?? '') as String;
-            final lang = (data['primaryLanguage'] ?? '-') as String;
-            final key =
-                '${name.trim().toLowerCase()}|${lang.trim().toLowerCase()}';
+            final name = _safeText(data['name'], 'Adsız Proje');
+            final lang = _safeText(data['primaryLanguage'], '-');
+            final key = '${name.toLowerCase()}|${lang.toLowerCase()}';
             if (seen.add(key)) filteredDocs.add(d);
           }
 
@@ -235,8 +236,8 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
               final data = doc.data();
 
               final projectId = doc.id;
-              final name = (data['name'] ?? '') as String;
-              final primaryLang = (data['primaryLanguage'] ?? '-') as String;
+              final name = _safeText(data['name'], 'Adsız Proje');
+              final primaryLang = _safeText(data['primaryLanguage'], '-');
 
               final breakdown = _formatLanguageBreakdown(
                 data['languageStats'],
@@ -246,10 +247,8 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
 
               return Card(
                 child: ListTile(
-                  title: Text(
-                    name,
-                    style: const TextStyle(fontWeight: FontWeight.w700),
-                  ),
+                  title: Text(name,
+                      style: const TextStyle(fontWeight: FontWeight.w700)),
                   subtitle: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -262,9 +261,7 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
-                              fontSize: 12,
-                              color: AppColors.textSoft,
-                            ),
+                                fontSize: 12, color: AppColors.textSoft),
                           ),
                         ),
                     ],
@@ -275,22 +272,32 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
                       PopupMenuButton<String>(
                         tooltip: 'Seçenekler',
                         onSelected: (value) async {
-                          if (value == 'ai') {
-                            _handleAiAnalyze(
-                              projectId: projectId,
-                              projectName: name,
-                            );
+                          if (value == 'analysis') {
+                            await _openAnalysisMenu(
+                                projectId: projectId, projectName: name);
                             return;
                           }
-
+                          if (value == 'ai') {
+                            _handleAiAnalyze(
+                                projectId: projectId, projectName: name);
+                            return;
+                          }
                           if (value == 'delete') {
                             await _handleDelete(
-                              projectId: projectId,
-                              projectName: name,
-                            );
+                                projectId: projectId, projectName: name);
                           }
                         },
                         itemBuilder: (context) => const [
+                          PopupMenuItem(
+                            value: 'analysis',
+                            child: Row(
+                              children: [
+                                Icon(Icons.manage_search),
+                                SizedBox(width: 10),
+                                Text('Kod Analizi'),
+                              ],
+                            ),
+                          ),
                           PopupMenuItem(
                             value: 'ai',
                             child: Row(
@@ -317,9 +324,7 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
                     ],
                   ),
                   onTap: () => _openProjectTasks(
-                    projectId: projectId,
-                    projectName: name,
-                  ),
+                      projectId: projectId, projectName: name),
                 ),
               );
             },

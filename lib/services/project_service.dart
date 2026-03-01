@@ -5,11 +5,16 @@ class ProjectService {
   final FirebaseFirestore _db = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
 
-  String? get _uid => _auth.currentUser?.uid;
+  /// ✅ UID'yi her çağrıldığında logla (debug için)
+  String? get _uid {
+    final uid = _auth.currentUser?.uid;
+    final email = _auth.currentUser?.email;
+    // ignore: avoid_print
+    print('ProjectService::_uid -> uid=$uid | email=$email');
+    return uid;
+  }
 
   /// ✅ Proje ekle
-  /// - languageStats: {"Dart": 92, "HTML": 8} gibi yüzde map'i
-  /// - fileCount: filtre sonrası sayılan dosya adedi
   Future<void> addProject({
     required String name,
     required String primaryLanguage,
@@ -43,14 +48,15 @@ class ProjectService {
     }
 
     try {
+      // ignore: avoid_print
+      print('ProjectService::addProject -> ownerId=$uid name=$cleanedName');
+
       await _db.collection('projects').add({
         'name': cleanedName,
         'ownerId': uid,
         'primaryLanguage': primaryLanguage,
         'createdAt': FieldValue.serverTimestamp(),
         'updatedAt': FieldValue.serverTimestamp(),
-
-        // ✅ yeni alanlar (opsiyonel)
         if (cleanedStats.isNotEmpty) 'languageStats': cleanedStats,
         if (cleanedFileCount != null) 'fileCount': cleanedFileCount,
       });
@@ -62,11 +68,28 @@ class ProjectService {
   /// ✅ Kullanıcının projeleri
   Stream<QuerySnapshot<Map<String, dynamic>>> myProjectsStream() {
     final uid = _uid;
-    if (uid == null) return const Stream.empty();
+    if (uid == null) {
+      // ignore: avoid_print
+      print('ProjectService::myProjectsStream -> UID NULL, stream empty');
+      return const Stream.empty();
+    }
+
+    // ignore: avoid_print
+    print('ProjectService::myProjectsStream -> querying ownerId=$uid');
 
     return _db
         .collection('projects')
         .where('ownerId', isEqualTo: uid)
+        .orderBy('createdAt', descending: true)
+        .snapshots();
+  }
+
+  /// ✅ DEBUG: Filtre olmadan tüm projeleri getir (sadece test için)
+  Stream<QuerySnapshot<Map<String, dynamic>>> allProjectsStreamForDebug() {
+    // ignore: avoid_print
+    print('ProjectService::allProjectsStreamForDebug -> NO FILTER!');
+    return _db
+        .collection('projects')
         .orderBy('createdAt', descending: true)
         .snapshots();
   }
@@ -88,6 +111,10 @@ class ProjectService {
 
       final data = snap.data() as Map<String, dynamic>;
       final ownerId = data['ownerId'] as String?;
+
+      // ignore: avoid_print
+      print(
+          'ProjectService::deleteProject -> uid=$uid ownerId=$ownerId projectId=$projectId');
 
       if (ownerId == null || ownerId != uid) {
         throw Exception('Bu projeyi silme yetkin yok.');
