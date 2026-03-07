@@ -1,14 +1,11 @@
-import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:archive/archive.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
-import 'package:path_provider/path_provider.dart';
 
 import '../theme/app_theme.dart';
-import '../services/project_service.dart';
+import '../services/project_import_service.dart';
 import 'projects_screen.dart';
 
 class ImportProjectScreen extends StatefulWidget {
@@ -21,132 +18,64 @@ class ImportProjectScreen extends StatefulWidget {
 class _ImportProjectScreenState extends State<ImportProjectScreen> {
   bool _loading = false;
 
-  // ekranda göstermek için
   String? _projectName;
   String? _primaryLanguage;
   int? _fileCount;
-
-  /// GitHub benzeri yüzde dağılımı: {'Dart': 92, 'HTML': 8}
   Map<String, int>? _languageStats;
 
-  final _projectService = ProjectService();
+  final _importService = ProjectImportService();
 
-  // ---------------- ZIP okuma ----------------
+  /// WEB: bytes kesin lazım (withData:true)
+  /// Diğer platformlarda bytes null gelirse readStream'den topla
+  Future<Uint8List> _readZipBytes(PlatformFile picked) async {
+    final b = picked.bytes;
+    if (b != null) return b;
 
-  /// ✅ WEB: path yok => bytes kullan
-  /// ✅ Android/Desktop: path kullan (RAM patlamasın)
-  Future<Uint8List> _readZipBytesSmart(PlatformFile picked) async {
-    if (kIsWeb) {
-      final b = picked.bytes;
-      if (b == null) {
-        throw Exception(
-          'Web’de ZIP bytes alınamadı.\n'
-          'pickFiles içinde withData:true olmalı.',
-        );
-      }
-      return b;
-    }
-
-    final path = picked.path;
-    if (path != null && path.trim().isNotEmpty) {
-      return File(path).readAsBytes();
-    }
-
-    if (picked.readStream != null) {
+    final stream = picked.readStream;
+    if (stream != null) {
       final chunks = <int>[];
-      await for (final data in picked.readStream!) {
+      await for (final data in stream) {
         chunks.addAll(data);
       }
       return Uint8List.fromList(chunks);
     }
 
     throw Exception(
-      'ZIP okunamadı: path/bytes/stream alınamadı.\n'
-      'Not: Drive/Recent yerine Downloads içinden seçmeyi dene.',
+      'ZIP okunamadı.\n'
+      'Web: pickFiles(withData:true) şart.\n'
+      'Diğer: pickFiles(withReadStream:true) ile dene.',
     );
   }
-
-  // ---------------- Hoca isteği: klasör seç -> ZIP oluştur ----------------
-
-  Future<File> _zipDirectoryToTemp({
-    required String dirPath,
-    required String zipName,
-  }) async {
-    final root = Directory(dirPath);
-    if (!await root.exists()) {
-      throw Exception('Klasör bulunamadı: $dirPath');
-    }
-
-    final archive = Archive();
-
-    await for (final entity in root.list(recursive: true, followLinks: false)) {
-      if (entity is! File) continue;
-
-      final rel = entity.path
-          .substring(dirPath.length)
-          .replaceFirst(RegExp(r'^[\\/]+'), '')
-          .replaceAll('\\', '/');
-
-      if (rel.isEmpty) continue;
-      if (_shouldIgnorePath(rel)) continue;
-
-      final bytes = await entity.readAsBytes();
-      archive.addFile(ArchiveFile(rel, bytes.length, bytes));
-    }
-
-    final zipped = ZipEncoder().encode(archive);
-    if (zipped == null) throw Exception('ZIP oluşturulamadı');
-
-    final tempDir = await getTemporaryDirectory();
-    final safeName = zipName.trim().isEmpty ? 'project' : zipName.trim();
-    final outFile = File('${tempDir.path}/$safeName.zip');
-    await outFile.writeAsBytes(zipped, flush: true);
-
-    return outFile;
-  }
-
-  // ---------------- import işlemi (zip bytes -> analiz -> firestore) ----------------
 
   Future<void> _importFromZipBytes({
     required Uint8List zipBytes,
-    required String fallbackName,
+    required String originalFileName,
   }) async {
-    final archive = ZipDecoder().decodeBytes(zipBytes);
-
-    final projectName =
-        _extractTopFolderName(archive) ?? _fallbackName(fallbackName);
-
-    // ✅ GitHub’a daha yakın: bytes bazlı dil yüzdesi
-    final statsBytes = _languageBytesFromArchive(archive);
-    final statsPercents = _bytesToPercents(statsBytes);
-
-    // ✅ Flutter heuristics: pubspec.yaml varsa Dart diyebiliriz
-    final isFlutter = _looksLikeFlutterProject(archive);
-    final primary = isFlutter ? 'Dart' : _pickPrimaryLanguage(statsPercents);
-
-    final totalFiles = _countFiles(archive);
-
-    await _projectService.addProject(
-      name: projectName,
-      primaryLanguage: primary,
+    final result = await _importService.importZipBytesAsProject(
+      bytes: zipBytes,
+      originalFileName: originalFileName,
     );
 
+    if (!mounted) return;
+
     setState(() {
-      _projectName = projectName;
-      _primaryLanguage = primary;
-      _fileCount = totalFiles;
-      _languageStats = statsPercents;
+      _projectName = result.projectName;
+      _primaryLanguage = result.primaryLanguage;
+      _fileCount = result.fileCount;
+      _languageStats = result.languageStats;
     });
 
-    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Proje oluşturuldu: $projectName ($primary)')),
+      SnackBar(
+        content: Text(
+            'Import tamam ✅ ${result.projectName} (${result.primaryLanguage})'),
+      ),
     );
   }
 
-  // ---------------- UI actions ----------------
-
   Future<void> _pickZipAndImport() async {
+    if (_loading) return;
+
     setState(() => _loading = true);
 
     try {
@@ -154,19 +83,31 @@ class _ImportProjectScreenState extends State<ImportProjectScreen> {
         type: FileType.custom,
         allowedExtensions: const ['zip'],
 
-        // ✅ Web: bytes lazım | Android/Desktop: bytes alma (RAM)
-        withData: kIsWeb,
+        // ✅ WEB’de en stabil kombinasyon:
+        // bytes al, stream açma (bazı tarayıcılarda takılıyor)
+        withData: true,
         withReadStream: !kIsWeb,
       );
 
       if (res == null || res.files.isEmpty) return;
 
       final picked = res.files.single;
-      final zipBytes = await _readZipBytesSmart(picked);
+
+      // küçük kontrol: boş dosya / yanlış seçim
+      if (!picked.name.toLowerCase().endsWith('.zip')) {
+        throw Exception('Lütfen .zip dosyası seç.');
+      }
+
+      final zipBytes = await _readZipBytes(picked);
+
+      // ekstra güvenlik: sıfır byte ise
+      if (zipBytes.isEmpty) {
+        throw Exception('ZIP boş görünüyor. Farklı bir ZIP seç.');
+      }
 
       await _importFromZipBytes(
         zipBytes: zipBytes,
-        fallbackName: picked.name,
+        originalFileName: picked.name,
       );
     } catch (e) {
       if (!mounted) return;
@@ -178,277 +119,13 @@ class _ImportProjectScreenState extends State<ImportProjectScreen> {
     }
   }
 
-  Future<void> _pickFolderAndImport() async {
-    setState(() => _loading = true);
-
-    try {
-      // ⚠️ Web’de folder picking genelde stabil değil (tarayıcı kısıtları)
-      final dirPath = await FilePicker.platform.getDirectoryPath();
-      if (dirPath == null || dirPath.trim().isEmpty) return;
-
-      final folderName = _safeFolderNameFromPath(dirPath);
-
-      final zipFile = await _zipDirectoryToTemp(
-        dirPath: dirPath,
-        zipName: folderName,
-      );
-
-      final zipBytes = await zipFile.readAsBytes();
-
-      await _importFromZipBytes(
-        zipBytes: zipBytes,
-        fallbackName: folderName,
-      );
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Hata: $e')),
-      );
-    } finally {
-      if (mounted) setState(() => _loading = false);
-    }
-  }
-
-  // ---------------- helpers ----------------
-
-  String _safeFolderNameFromPath(String dirPath) {
-    final segments = Directory(dirPath).uri.pathSegments;
-    final last = segments.isNotEmpty
-        ? segments.lastWhere((e) => e.isNotEmpty, orElse: () => 'project')
-        : 'project';
-    final cleaned = last.trim();
-    return cleaned.isEmpty ? 'project' : cleaned;
-  }
-
-  String _fallbackName(String fileName) {
-    final lower = fileName.toLowerCase();
-    return lower.endsWith('.zip')
-        ? fileName.substring(0, fileName.length - 4)
-        : fileName;
-  }
-
-  String? _extractTopFolderName(Archive archive) {
-    for (final f in archive) {
-      final n = f.name;
-      if (n.contains('/')) {
-        final top = n.split('/').first.trim();
-        if (top.isNotEmpty) return top;
-      }
-    }
-    return null;
-  }
-
-  // ✅ Dil tespitinde SADECE gerçek kaynak kod klasörlerine bak
-  bool _isRelevantForLanguageDetection(String path) {
-    final p = path.replaceAll('\\', '/').toLowerCase();
-
-    if (p.startsWith('lib/')) return true;
-    if (p.startsWith('test/')) return true;
-    if (p.startsWith('tool/')) return true;
-    if (p.startsWith('bin/')) return true;
-    if (p.startsWith('web/')) return true;
-
-    return false; // android/ios/windows/macos/linux dahil değil
-  }
-
-  // ✅ Flutter tespiti (pubspec.yaml -> Dart ağırlıklı kabul)
-  bool _looksLikeFlutterProject(Archive archive) {
-    for (final f in archive) {
-      final name = f.name.replaceAll('\\', '/').toLowerCase();
-      if (name.endsWith('pubspec.yaml')) return true;
-    }
-    return false;
-  }
-
-  // ✅ "git/build/node_modules vs" filtre
-  bool _shouldIgnorePath(String path) {
-    final p = path.replaceAll('\\', '/').toLowerCase();
-
-    const ignoreFolderStarts = <String>[
-      '.git/',
-      '.github/',
-      '.idea/',
-      '.vscode/',
-      '.dart_tool/',
-      '.gradle/',
-      'node_modules/',
-      'pods/',
-      'build/',
-      'dist/',
-      'target/',
-      'coverage/',
-      '__pycache__/',
-    ];
-
-    for (final s in ignoreFolderStarts) {
-      if (p.startsWith(s)) return true;
-    }
-
-    const ignoreFolders = <String>[
-      '/.git/',
-      '/.github/',
-      '/.idea/',
-      '/.vscode/',
-      '/.dart_tool/',
-      '/.gradle/',
-      '/.svn/',
-      '/.hg/',
-      '/.vs/',
-      '/.settings/',
-      '/.terraform/',
-      '/.next/',
-      '/.nuxt/',
-      '/.angular/',
-      '/.expo/',
-      '/.pytest_cache/',
-      '/__pycache__/',
-      '/node_modules/',
-      '/packages/',
-      '/vendor/',
-      '/pods/',
-      '/carthage/',
-      '/build/',
-      '/dist/',
-      '/target/',
-      '/out/',
-      '/bin/',
-      '/obj/',
-      '/coverage/',
-      '/.firebase/',
-      '/.venv/',
-      '/venv/',
-    ];
-
-    for (final s in ignoreFolders) {
-      if (p.contains(s)) return true;
-    }
-
-    const ignoreFiles = <String>[
-      '.ds_store',
-      'thumbs.db',
-      'pubspec.lock',
-      'package-lock.json',
-      'yarn.lock',
-      'pnpm-lock.yaml',
-      'podfile.lock',
-    ];
-
-    final base = p.split('/').last;
-    if (ignoreFiles.contains(base)) return true;
-
-    return false;
-  }
-
-  int _countFiles(Archive archive) {
-    int c = 0;
-    for (final f in archive) {
-      final name = f.name;
-      if (name.toLowerCase().endsWith('/')) continue;
-      if (_shouldIgnorePath(name)) continue;
-      c++;
-    }
-    return c;
-  }
-
-  /// ✅ Dil tespiti: bytes bazlı (GitHub benzeri)
-  /// 🔥 android/ios/windows gibi klasörleri SAYMAMAK için filtre var
-  Map<String, int> _languageBytesFromArchive(Archive archive) {
-    final stats = <String, int>{
-      'Dart': 0,
-      'Java': 0,
-      'Kotlin': 0,
-      'Python': 0,
-      'C#': 0,
-      'JavaScript': 0,
-      'TypeScript': 0,
-      'C/C++': 0,
-      'HTML': 0,
-      'CSS': 0,
-    };
-
-    for (final f in archive) {
-      final name = f.name.replaceAll('\\', '/').toLowerCase();
-      if (name.endsWith('/')) continue;
-      if (_shouldIgnorePath(name)) continue;
-
-      // ✅ kritik filtre: sadece kaynak kod klasörleri
-      if (!_isRelevantForLanguageDetection(name)) continue;
-
-      final size = f.size;
-
-      if (name.endsWith('.dart')) {
-        stats['Dart'] = stats['Dart']! + size;
-      } else if (name.endsWith('.java')) {
-        stats['Java'] = stats['Java']! + size;
-      } else if (name.endsWith('.kt')) {
-        stats['Kotlin'] = stats['Kotlin']! + size;
-      } else if (name.endsWith('.py')) {
-        stats['Python'] = stats['Python']! + size;
-      } else if (name.endsWith('.cs')) {
-        stats['C#'] = stats['C#']! + size;
-      } else if (name.endsWith('.js')) {
-        stats['JavaScript'] = stats['JavaScript']! + size;
-      } else if (name.endsWith('.ts')) {
-        stats['TypeScript'] = stats['TypeScript']! + size;
-      } else if (name.endsWith('.c') ||
-          name.endsWith('.cpp') ||
-          name.endsWith('.h') ||
-          name.endsWith('.hpp')) {
-        stats['C/C++'] = stats['C/C++']! + size;
-      } else if (name.endsWith('.html')) {
-        stats['HTML'] = stats['HTML']! + size;
-      } else if (name.endsWith('.css')) {
-        stats['CSS'] = stats['CSS']! + size;
-      }
-    }
-
-    stats.removeWhere((k, v) => v <= 0);
-    return stats;
-  }
-
-  /// Bytes -> yüzde (0..100). GitHub benzeri görünüm için.
-  Map<String, int> _bytesToPercents(Map<String, int> bytes) {
-    if (bytes.isEmpty) return {};
-
-    final total = bytes.values.fold<int>(0, (a, b) => a + b);
-    if (total <= 0) return {};
-
-    final entries = bytes.entries.toList()
-      ..sort((a, b) => b.value.compareTo(a.value));
-
-    final percents = <String, int>{};
-    int sum = 0;
-
-    for (final e in entries) {
-      final p = ((e.value / total) * 100).round();
-      percents[e.key] = p;
-      sum += p;
-    }
-
-    if (percents.isNotEmpty && sum != 100) {
-      final topKey = entries.first.key;
-      percents[topKey] = (percents[topKey] ?? 0) + (100 - sum);
-      if ((percents[topKey] ?? 0) < 0) percents[topKey] = 0;
-    }
-
-    percents.removeWhere((k, v) => v <= 0);
-    return percents;
-  }
-
-  String _pickPrimaryLanguage(Map<String, int> percents) {
-    if (percents.isEmpty) return 'Bilinmiyor';
-
-    String best = percents.keys.first;
-    int bestVal = percents[best] ?? 0;
-
-    percents.forEach((k, v) {
-      if (v > bestVal) {
-        best = k;
-        bestVal = v;
-      }
-    });
-
-    return bestVal <= 0 ? 'Bilinmiyor' : best;
+  void _folderDisabledHint() {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text(
+            'Web’de klasör seçip ZIP’leme kapalı. ZIP dosyası seçerek import et.'),
+      ),
+    );
   }
 
   String _formatLanguageBreakdown(Map<String, int>? stats, {int maxItems = 4}) {
@@ -461,8 +138,6 @@ class _ImportProjectScreenState extends State<ImportProjectScreen> {
     return top.map((e) => '${e.key} %${e.value}').join(' • ');
   }
 
-  // ---------------- UI ----------------
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -474,6 +149,7 @@ class _ImportProjectScreenState extends State<ImportProjectScreen> {
         padding: const EdgeInsets.all(16),
         child: Column(
           children: [
+            // Klasör seçme: web’de kapalı
             SizedBox(
               width: double.infinity,
               height: 48,
@@ -482,32 +158,35 @@ class _ImportProjectScreenState extends State<ImportProjectScreen> {
                   backgroundColor: AppColors.teal,
                   foregroundColor: Colors.black,
                 ),
-                onPressed: _loading ? null : _pickFolderAndImport,
+                onPressed: _loading ? null : _folderDisabledHint,
+                icon: const Icon(Icons.folder_open),
+                label: Text(
+                  _loading ? 'Yükleniyor...' : 'Klasör Seç (Web’de kapalı)',
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
+
+            // ZIP seç
+            SizedBox(
+              width: double.infinity,
+              height: 48,
+              child: OutlinedButton.icon(
+                onPressed: _loading ? null : _pickZipAndImport,
                 icon: _loading
                     ? const SizedBox(
                         width: 18,
                         height: 18,
                         child: CircularProgressIndicator(strokeWidth: 2),
                       )
-                    : const Icon(Icons.folder_open),
-                label: Text(
-                  _loading
-                      ? 'Yükleniyor...'
-                      : 'Klasör Seç (Uygulama ZIP’lesin)',
-                ),
+                    : const Icon(Icons.upload_file),
+                label:
+                    Text(_loading ? 'Import ediliyor...' : 'ZIP Seç (Import)'),
               ),
             ),
-            const SizedBox(height: 10),
-            SizedBox(
-              width: double.infinity,
-              height: 48,
-              child: OutlinedButton.icon(
-                onPressed: _loading ? null : _pickZipAndImport,
-                icon: const Icon(Icons.upload_file),
-                label: const Text('ZIP Seç (Eski yöntem)'),
-              ),
-            ),
+
             const SizedBox(height: 16),
+
             if (_projectName != null) ...[
               Card(
                 child: Padding(

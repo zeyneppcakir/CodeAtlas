@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 
+import '../services/project_service.dart';
 import '../services/task_service.dart';
 import '../theme/app_theme.dart';
 import '../theme/priority_style.dart';
@@ -23,12 +24,11 @@ class ProjectTasksScreen extends StatefulWidget {
 
 class _ProjectTasksScreenState extends State<ProjectTasksScreen> {
   final _service = TaskService();
+  final _projectService = ProjectService();
 
-  String _sort = 'dueDate'; // dueDate | priority
+  String _sort = 'dueDate';
   bool _desc = false;
-
-  // ✅ status filtresi
-  String _statusFilter = 'all'; // all | todo | doing | done
+  String _statusFilter = 'all';
 
   void _handleAiAnalyze() {
     ScaffoldMessenger.of(context).showSnackBar(
@@ -63,6 +63,146 @@ class _ProjectTasksScreenState extends State<ProjectTasksScreen> {
     return 'todo';
   }
 
+  Future<void> _openMembersSheet() async {
+    await showModalBottomSheet(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (ctx) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+            child: SizedBox(
+              height: MediaQuery.of(ctx).size.height * 0.70,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Expanded(
+                        child: Text(
+                          'Üyeler',
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ),
+                      FilledButton.icon(
+                        onPressed: () async {
+                          Navigator.pop(ctx);
+                          await _showAddMemberDialog();
+                        },
+                        icon: const Icon(Icons.person_add_alt_1),
+                        label: const Text('Üye Ekle'),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Expanded(
+                    child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+                      stream: _projectService.membersStream(widget.projectId),
+                      builder: (context, snap) {
+                        if (snap.hasError) {
+                          return Text(
+                            'Hata: ${snap.error}',
+                            style: const TextStyle(color: AppColors.textSoft),
+                          );
+                        }
+                        if (!snap.hasData) {
+                          return const Center(
+                              child: CircularProgressIndicator());
+                        }
+
+                        final docs = snap.data!.docs;
+
+                        if (docs.isEmpty) {
+                          return const Center(
+                            child: Text(
+                              'Henüz üye yok. "Üye Ekle" ile ekleyebilirsin.',
+                              style: TextStyle(color: AppColors.textSoft),
+                              textAlign: TextAlign.center,
+                            ),
+                          );
+                        }
+
+                        return ListView.separated(
+                          itemCount: docs.length,
+                          separatorBuilder: (_, __) => const Divider(height: 1),
+                          itemBuilder: (context, i) {
+                            final d = docs[i].data();
+                            final email = (d['email'] ?? '-') as String;
+                            final role = (d['role'] ?? 'member') as String;
+
+                            return ListTile(
+                              leading: const Icon(Icons.person_outline),
+                              title: Text(email),
+                              subtitle: Text('Rol: $role'),
+                            );
+                          },
+                        );
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _showAddMemberDialog() async {
+    final ctrl = TextEditingController();
+
+    final email = await showDialog<String>(
+      context: context,
+      builder: (ctx) {
+        return AlertDialog(
+          title: const Text('Üye ekle'),
+          content: TextField(
+            controller: ctrl,
+            keyboardType: TextInputType.emailAddress,
+            decoration: const InputDecoration(
+              labelText: 'Kullanıcı email',
+              hintText: 'ornek@gmail.com',
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Vazgeç'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, ctrl.text.trim()),
+              child: const Text('Ekle'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (email == null || email.trim().isEmpty) return;
+
+    try {
+      await _projectService.addMemberByEmail(
+        projectId: widget.projectId,
+        email: email.trim(),
+      );
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Üye eklendi ✅ $email')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Üye eklenemedi: $e')),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -70,6 +210,11 @@ class _ProjectTasksScreenState extends State<ProjectTasksScreen> {
         backgroundColor: AppColors.navy,
         title: Text(widget.projectName),
         actions: [
+          IconButton(
+            tooltip: 'Üyeler',
+            onPressed: _openMembersSheet,
+            icon: const Icon(Icons.group_add_outlined),
+          ),
           IconButton(
             tooltip: 'AI Analiz Et',
             onPressed: _handleAiAnalyze,
@@ -91,7 +236,6 @@ class _ProjectTasksScreenState extends State<ProjectTasksScreen> {
         padding: const EdgeInsets.all(16),
         child: Column(
           children: [
-            // -------- ÜST BAR: SIRALA + YÖN ----------
             Row(
               children: [
                 Expanded(
@@ -120,10 +264,7 @@ class _ProjectTasksScreenState extends State<ProjectTasksScreen> {
                 ),
               ],
             ),
-
             const SizedBox(height: 10),
-
-            // -------- DURUM FİLTRESİ ----------
             DropdownButtonFormField<String>(
               value: _statusFilter,
               items: const [
@@ -135,10 +276,7 @@ class _ProjectTasksScreenState extends State<ProjectTasksScreen> {
               onChanged: (v) => setState(() => _statusFilter = v ?? 'all'),
               decoration: const InputDecoration(labelText: 'Durum filtresi'),
             ),
-
             const SizedBox(height: 16),
-
-            // -------- LİSTE ----------
             Expanded(
               child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
                 stream: _service.tasksStream(
@@ -182,6 +320,12 @@ class _ProjectTasksScreenState extends State<ProjectTasksScreen> {
                       final description = d['description'] as String?;
                       final priority = (d['priority'] ?? 2) as int;
 
+                      final assigneeId = (d['assigneeId'] as String?)?.trim();
+                      final assigneeEmail =
+                          (d['assigneeEmail'] as String?)?.trim();
+                      final hasAssignee =
+                          assigneeEmail != null && assigneeEmail.isNotEmpty;
+
                       final due = d['dueDate'];
                       final dueDate = (due is Timestamp) ? due.toDate() : null;
 
@@ -189,12 +333,11 @@ class _ProjectTasksScreenState extends State<ProjectTasksScreen> {
                           ? '${dueDate.day}.${dueDate.month}.${dueDate.year}'
                           : 'Tarih yok';
 
-                      final hasDesc = (description != null &&
-                          description.trim().isNotEmpty);
+                      final hasDesc =
+                          description != null && description.trim().isNotEmpty;
 
                       final status = _safeStatus(d['status']);
                       final isDone = status == 'done';
-
                       final aiGenerated = (d['aiGenerated'] == true);
 
                       return Card(
@@ -205,6 +348,8 @@ class _ProjectTasksScreenState extends State<ProjectTasksScreen> {
                             description: description,
                             priority: priority,
                             dueDate: dueDate,
+                            assigneeId: assigneeId,
+                            assigneeEmail: assigneeEmail,
                           ),
                           title: Row(
                             children: [
@@ -233,6 +378,17 @@ class _ProjectTasksScreenState extends State<ProjectTasksScreen> {
                             children: [
                               const SizedBox(height: 4),
                               Text('Bitiş: $dueText'),
+                              if (hasAssignee) ...[
+                                const SizedBox(height: 4),
+                                Text(
+                                  'Atanan: $assigneeEmail',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    color: AppColors.textSoft,
+                                  ),
+                                ),
+                              ],
                               if (hasDesc) ...[
                                 const SizedBox(height: 4),
                                 Text(
@@ -277,7 +433,8 @@ class _ProjectTasksScreenState extends State<ProjectTasksScreen> {
                                             .showSnackBar(
                                           SnackBar(
                                             content: Text(
-                                                'Durum güncellenemedi: $e'),
+                                              'Durum güncellenemedi: $e',
+                                            ),
                                           ),
                                         );
                                       }
@@ -295,6 +452,8 @@ class _ProjectTasksScreenState extends State<ProjectTasksScreen> {
                                   description: description,
                                   priority: priority,
                                   dueDate: dueDate,
+                                  assigneeId: assigneeId,
+                                  assigneeEmail: assigneeEmail,
                                 ),
                               ),
                             ],
@@ -312,14 +471,14 @@ class _ProjectTasksScreenState extends State<ProjectTasksScreen> {
     );
   }
 
-  // ---------------------- ACTIONS ----------------------
-
   Future<void> _showTaskActions({
     required String taskId,
     required String title,
     required String? description,
     required int priority,
     required DateTime? dueDate,
+    String? assigneeId,
+    String? assigneeEmail,
   }) async {
     await showModalBottomSheet(
       context: context,
@@ -344,6 +503,8 @@ class _ProjectTasksScreenState extends State<ProjectTasksScreen> {
                         initialDescription: description,
                         initialPriority: priority,
                         initialDueDate: dueDate,
+                        initialAssigneeId: assigneeId,
+                        initialAssigneeEmail: assigneeEmail,
                       ),
                     ),
                   );
@@ -464,8 +625,6 @@ class _ProjectTasksScreenState extends State<ProjectTasksScreen> {
       },
     );
   }
-
-  // ---------------------- UI HELPERS ----------------------
 
   Widget _priorityChip(int p) {
     return Container(
