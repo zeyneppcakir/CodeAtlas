@@ -1,8 +1,10 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 
 import '../theme/app_theme.dart';
 import '../services/task_service.dart';
 import '../services/ai_service.dart';
+import '../services/project_service.dart';
 
 class AddTaskScreen extends StatefulWidget {
   final String projectId;
@@ -13,6 +15,10 @@ class AddTaskScreen extends StatefulWidget {
   final int? initialPriority;
   final DateTime? initialDueDate;
 
+  // ✅ yeni
+  final String? initialAssigneeId;
+  final String? initialAssigneeEmail;
+
   const AddTaskScreen({
     super.key,
     required this.projectId,
@@ -21,6 +27,8 @@ class AddTaskScreen extends StatefulWidget {
     this.initialDescription,
     this.initialPriority,
     this.initialDueDate,
+    this.initialAssigneeId,
+    this.initialAssigneeEmail,
   });
 
   @override
@@ -39,6 +47,11 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
 
   final _service = TaskService();
   final _ai = AIService();
+  final _projectService = ProjectService();
+
+  // ✅ seçilen üye
+  String? _assigneeId;
+  String? _assigneeEmail;
 
   bool get _isEdit => widget.taskId != null;
 
@@ -51,6 +64,9 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
       _descCtrl.text = widget.initialDescription ?? '';
       _priority = widget.initialPriority ?? 2;
       _dueDate = widget.initialDueDate;
+
+      _assigneeId = widget.initialAssigneeId;
+      _assigneeEmail = widget.initialAssigneeEmail;
     }
   }
 
@@ -95,6 +111,8 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
           description: desc,
           priority: _priority,
           dueDate: _dueDate!,
+          assigneeId: _assigneeId,
+          assigneeEmail: _assigneeEmail,
         );
       } else {
         await _service.addTask(
@@ -103,6 +121,8 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
           description: desc,
           priority: _priority,
           dueDate: _dueDate!,
+          assigneeId: _assigneeId,
+          assigneeEmail: _assigneeEmail,
         );
       }
 
@@ -202,7 +222,6 @@ Proje:
     setState(() => _aiLoading = true);
 
     try {
-      // 1) İlk önerileri çek
       var titles = await _fetchAiTitles();
 
       if (!mounted) return;
@@ -214,7 +233,6 @@ Proje:
         return;
       }
 
-      // 2) Dialog state’i
       final selected = <int>{};
       bool dialogLoading = false;
 
@@ -234,7 +252,6 @@ Proje:
                   final newTitles = await _fetchAiTitles();
 
                   if (newTitles.isEmpty) {
-                    // ✅ dialog context ile snackbar
                     ScaffoldMessenger.of(ctx).showSnackBar(
                       const SnackBar(
                         content:
@@ -245,7 +262,7 @@ Proje:
 
                   setLocal(() {
                     if (newTitles.isNotEmpty) titles = newTitles;
-                    selected.clear(); // yenileyince seçim sıfırlansın
+                    selected.clear();
                   });
                 } catch (_) {
                   ScaffoldMessenger.of(ctx).showSnackBar(
@@ -303,8 +320,6 @@ Proje:
                             ),
                           ],
                         ),
-
-                        // ✅ Yenile butonu
                         Align(
                           alignment: Alignment.centerLeft,
                           child: TextButton.icon(
@@ -324,9 +339,7 @@ Proje:
                             ),
                           ),
                         ),
-
                         const Divider(),
-
                         ...List.generate(titles.length, (i) {
                           final checked = selected.contains(i);
                           return CheckboxListTile(
@@ -369,7 +382,6 @@ Proje:
         },
       );
 
-      // 3) Vazgeç / seçilmedi
       if (ok != true || selected.isEmpty) {
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
@@ -378,7 +390,6 @@ Proje:
         return;
       }
 
-      // 4) Seçilenleri ekle
       final now = DateTime.now();
       int k = 0;
       final sorted = selected.toList()..sort();
@@ -389,11 +400,12 @@ Proje:
           projectId: widget.projectId,
           title: titles[i],
           description: null,
-          priority: _priority, // ✅ kullanıcı seçimi
+          priority: _priority,
           dueDate: due,
           status: 'todo',
-          aiGenerated: true, // ✅ AI etiketi çıksın
-          // ai: {'source': 'ollama', 'model': 'qwen2.5:3b'}  // istersen meta da tut
+          aiGenerated: true,
+          assigneeId: _assigneeId,
+          assigneeEmail: _assigneeEmail,
         );
         k++;
       }
@@ -437,77 +449,138 @@ Proje:
       ),
       body: Padding(
         padding: const EdgeInsets.all(16),
-        child: Column(
-          children: [
-            TextField(
-              controller: _titleCtrl,
-              decoration: const InputDecoration(labelText: 'Başlık'),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _descCtrl,
-              decoration:
-                  const InputDecoration(labelText: 'Açıklama (opsiyonel)'),
-              maxLines: 3,
-            ),
-            const SizedBox(height: 12),
-            DropdownButtonFormField<int>(
-              value: _priority,
-              items: const [
-                DropdownMenuItem(value: 1, child: Text('1 - Düşük')),
-                DropdownMenuItem(value: 2, child: Text('2 - Orta')),
-                DropdownMenuItem(value: 3, child: Text('3 - Yüksek')),
+        child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+          stream: _projectService.membersStream(widget.projectId),
+          builder: (context, memberSnap) {
+            final memberDocs = memberSnap.data?.docs ?? [];
+
+            final memberItems = <DropdownMenuItem<String?>>[
+              const DropdownMenuItem<String?>(
+                value: null,
+                child: Text('Atanmadı'),
+              ),
+              ...memberDocs.map((doc) {
+                final d = doc.data();
+                final uid = (d['uid'] ?? doc.id).toString();
+                final email = (d['email'] ?? '-').toString();
+
+                return DropdownMenuItem<String?>(
+                  value: uid,
+                  child: Text(email),
+                  onTap: () {
+                    _assigneeId = uid;
+                    _assigneeEmail = email;
+                  },
+                );
+              }),
+            ];
+
+            return Column(
+              children: [
+                TextField(
+                  controller: _titleCtrl,
+                  decoration: const InputDecoration(labelText: 'Başlık'),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _descCtrl,
+                  decoration:
+                      const InputDecoration(labelText: 'Açıklama (opsiyonel)'),
+                  maxLines: 3,
+                ),
+                const SizedBox(height: 12),
+                DropdownButtonFormField<int>(
+                  value: _priority,
+                  items: const [
+                    DropdownMenuItem(value: 1, child: Text('1 - Düşük')),
+                    DropdownMenuItem(value: 2, child: Text('2 - Orta')),
+                    DropdownMenuItem(value: 3, child: Text('3 - Yüksek')),
+                  ],
+                  onChanged: (v) => setState(() => _priority = v ?? 2),
+                  decoration: const InputDecoration(labelText: 'Öncelik'),
+                ),
+                const SizedBox(height: 12),
+
+                // ✅ Atanan üye
+                DropdownButtonFormField<String?>(
+                  value: _assigneeId,
+                  items: memberItems,
+                  onChanged: (value) {
+                    setState(() {
+                      _assigneeId = value;
+
+                      if (value == null) {
+                        _assigneeEmail = null;
+                        return;
+                      }
+
+                      final matched = memberDocs
+                          .map((e) => e.data())
+                          .cast<Map<String, dynamic>>()
+                          .firstWhere(
+                            (m) => (m['uid'] ?? '').toString() == value,
+                            orElse: () => <String, dynamic>{},
+                          );
+
+                      _assigneeEmail =
+                          (matched['email'] ?? '').toString().trim().isEmpty
+                              ? null
+                              : (matched['email'] as String);
+                    });
+                  },
+                  decoration: const InputDecoration(
+                    labelText: 'Atanan üye',
+                  ),
+                ),
+
+                const SizedBox(height: 12),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: _pickDate,
+                    icon: const Icon(Icons.date_range),
+                    label: Text(dueText),
+                  ),
+                ),
+                const SizedBox(height: 16),
+
+                SizedBox(
+                  width: double.infinity,
+                  height: 46,
+                  child: OutlinedButton.icon(
+                    onPressed: (_isEdit || _aiLoading || _loading)
+                        ? null
+                        : _aiSuggestTasksAndAdd,
+                    icon: _aiLoading
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.smart_toy),
+                    label: Text(
+                        _aiLoading ? 'AI düşünüyor...' : 'AI’dan Task Öner'),
+                  ),
+                ),
+
+                const SizedBox(height: 12),
+                SizedBox(
+                  width: double.infinity,
+                  height: 48,
+                  child: ElevatedButton(
+                    onPressed: _loading ? null : _save,
+                    child: _loading
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : Text(_isEdit ? 'Güncelle' : 'Kaydet'),
+                  ),
+                ),
               ],
-              onChanged: (v) => setState(() => _priority = v ?? 2),
-              decoration: const InputDecoration(labelText: 'Öncelik'),
-            ),
-            const SizedBox(height: 12),
-            SizedBox(
-              width: double.infinity,
-              child: OutlinedButton.icon(
-                onPressed: _pickDate,
-                icon: const Icon(Icons.date_range),
-                label: Text(dueText),
-              ),
-            ),
-            const SizedBox(height: 16),
-
-            // AI Butonu (edit modunda kapalı)
-            SizedBox(
-              width: double.infinity,
-              height: 46,
-              child: OutlinedButton.icon(
-                onPressed: (_isEdit || _aiLoading || _loading)
-                    ? null
-                    : _aiSuggestTasksAndAdd,
-                icon: _aiLoading
-                    ? const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.smart_toy),
-                label:
-                    Text(_aiLoading ? 'AI düşünüyor...' : 'AI’dan Task Öner'),
-              ),
-            ),
-
-            const SizedBox(height: 12),
-            SizedBox(
-              width: double.infinity,
-              height: 48,
-              child: ElevatedButton(
-                onPressed: _loading ? null : _save,
-                child: _loading
-                    ? const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : Text(_isEdit ? 'Güncelle' : 'Kaydet'),
-              ),
-            ),
-          ],
+            );
+          },
         ),
       ),
     );

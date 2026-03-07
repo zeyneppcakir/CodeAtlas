@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import 'package:codeatlas/theme/app_theme.dart';
@@ -16,10 +17,37 @@ class ProjectsScreen extends StatefulWidget {
 
 class _ProjectsScreenState extends State<ProjectsScreen> {
   final _service = ProjectService();
+  final _auth = FirebaseAuth.instance;
+
+  final Map<String, Future<bool>> _memberCheckCache = {};
 
   String _safeText(dynamic v, String fallback) {
     final s = (v ?? '').toString().trim();
     return s.isEmpty ? fallback : s;
+  }
+
+  String? get _uid => _auth.currentUser?.uid;
+
+  Future<bool> _isMemberOfProject(String projectId) {
+    final cached = _memberCheckCache[projectId];
+    if (cached != null) return cached;
+
+    final uid = _uid;
+    if (uid == null) {
+      return Future.value(false);
+    }
+
+    final future = FirebaseFirestore.instance
+        .collection('projects')
+        .doc(projectId)
+        .collection('members')
+        .doc(uid)
+        .get()
+        .then((snap) => snap.exists)
+        .catchError((_) => false);
+
+    _memberCheckCache[projectId] = future;
+    return future;
   }
 
   Future<bool> _confirmDelete(BuildContext context, String projectName) async {
@@ -149,6 +177,147 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
     );
   }
 
+  void _afterMenuClosed(VoidCallback action) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      action();
+    });
+  }
+
+  Widget _roleChip(bool isOwner) {
+    return Container(
+      margin: const EdgeInsets.only(top: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(
+          color: isOwner ? AppColors.teal : AppColors.textSoft,
+        ),
+      ),
+      child: Text(
+        isOwner ? 'Owner' : 'Member',
+        style: TextStyle(
+          fontSize: 12,
+          color: isOwner ? AppColors.teal : AppColors.textSoft,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildProjectCard({
+    required String projectId,
+    required String name,
+    required String primaryLang,
+    required String breakdown,
+    required bool isOwner,
+  }) {
+    return Card(
+      child: ListTile(
+        title: Text(
+          name,
+          style: const TextStyle(fontWeight: FontWeight.w700),
+        ),
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Dil: $primaryLang'),
+            if (breakdown.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Text(
+                  breakdown,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: AppColors.textSoft,
+                  ),
+                ),
+              ),
+            _roleChip(isOwner),
+          ],
+        ),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            PopupMenuButton<String>(
+              tooltip: 'Seçenekler',
+              onSelected: (value) {
+                if (value == 'analysis') {
+                  _afterMenuClosed(() async {
+                    await _openAnalysisMenu(
+                      projectId: projectId,
+                      projectName: name,
+                    );
+                  });
+                  return;
+                }
+
+                if (value == 'ai') {
+                  _afterMenuClosed(() {
+                    _handleAiAnalyze(
+                      projectId: projectId,
+                      projectName: name,
+                    );
+                  });
+                  return;
+                }
+
+                if (value == 'delete') {
+                  _afterMenuClosed(() async {
+                    await _handleDelete(
+                      projectId: projectId,
+                      projectName: name,
+                    );
+                  });
+                }
+              },
+              itemBuilder: (context) => [
+                const PopupMenuItem(
+                  value: 'analysis',
+                  child: Row(
+                    children: [
+                      Icon(Icons.manage_search),
+                      SizedBox(width: 10),
+                      Text('Kod Analizi'),
+                    ],
+                  ),
+                ),
+                const PopupMenuItem(
+                  value: 'ai',
+                  child: Row(
+                    children: [
+                      Icon(Icons.auto_awesome_outlined),
+                      SizedBox(width: 10),
+                      Text('AI Analiz Et'),
+                    ],
+                  ),
+                ),
+                if (isOwner)
+                  const PopupMenuItem(
+                    value: 'delete',
+                    child: Row(
+                      children: [
+                        Icon(Icons.delete_outline),
+                        SizedBox(width: 10),
+                        Text('Sil'),
+                      ],
+                    ),
+                  ),
+              ],
+            ),
+            const Icon(Icons.chevron_right),
+          ],
+        ),
+        onTap: () => _openProjectTasks(
+          projectId: projectId,
+          projectName: name,
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     debugPrint('>>> ProjectsScreen BUILD (NEW TEST)');
@@ -188,7 +357,7 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
         child: const Icon(Icons.upload_file, color: Colors.black),
       ),
       body: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-        stream: _service.myProjectsStream(),
+        stream: _service.allProjectsStreamForDebug(),
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.waiting) {
             return const Center(child: CircularProgressIndicator());
@@ -216,28 +385,29 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
           }
 
           final docs = snapshot.data!.docs;
+          final uid = _uid;
 
-          final seen = <String>{};
-          final filteredDocs = <QueryDocumentSnapshot<Map<String, dynamic>>>[];
-          for (final d in docs) {
-            final data = d.data();
-            final name = _safeText(data['name'], 'Adsız Proje');
-            final lang = _safeText(data['primaryLanguage'], '-');
-            final key = '${name.toLowerCase()}|${lang.toLowerCase()}';
-            if (seen.add(key)) filteredDocs.add(d);
+          if (uid == null) {
+            return const Center(
+              child: Text(
+                'Oturum bulunamadı.',
+                style: TextStyle(color: AppColors.textSoft),
+              ),
+            );
           }
 
           return ListView.separated(
             padding: const EdgeInsets.all(12),
-            itemCount: filteredDocs.length,
+            itemCount: docs.length,
             separatorBuilder: (_, __) => const SizedBox(height: 10),
             itemBuilder: (context, i) {
-              final doc = filteredDocs[i];
+              final doc = docs[i];
               final data = doc.data();
 
               final projectId = doc.id;
               final name = _safeText(data['name'], 'Adsız Proje');
               final primaryLang = _safeText(data['primaryLanguage'], '-');
+              final ownerId = _safeText(data['ownerId'], '');
 
               final breakdown = _formatLanguageBreakdown(
                 data['languageStats'],
@@ -245,87 +415,38 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
                 maxItems: 3,
               );
 
-              return Card(
-                child: ListTile(
-                  title: Text(name,
-                      style: const TextStyle(fontWeight: FontWeight.w700)),
-                  subtitle: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text('Dil: $primaryLang'),
-                      if (breakdown.isNotEmpty)
-                        Padding(
-                          padding: const EdgeInsets.only(top: 4),
-                          child: Text(
-                            breakdown,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                                fontSize: 12, color: AppColors.textSoft),
-                          ),
-                        ),
-                    ],
-                  ),
-                  trailing: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      PopupMenuButton<String>(
-                        tooltip: 'Seçenekler',
-                        onSelected: (value) async {
-                          if (value == 'analysis') {
-                            await _openAnalysisMenu(
-                                projectId: projectId, projectName: name);
-                            return;
-                          }
-                          if (value == 'ai') {
-                            _handleAiAnalyze(
-                                projectId: projectId, projectName: name);
-                            return;
-                          }
-                          if (value == 'delete') {
-                            await _handleDelete(
-                                projectId: projectId, projectName: name);
-                          }
-                        },
-                        itemBuilder: (context) => const [
-                          PopupMenuItem(
-                            value: 'analysis',
-                            child: Row(
-                              children: [
-                                Icon(Icons.manage_search),
-                                SizedBox(width: 10),
-                                Text('Kod Analizi'),
-                              ],
-                            ),
-                          ),
-                          PopupMenuItem(
-                            value: 'ai',
-                            child: Row(
-                              children: [
-                                Icon(Icons.auto_awesome_outlined),
-                                SizedBox(width: 10),
-                                Text('AI Analiz Et'),
-                              ],
-                            ),
-                          ),
-                          PopupMenuItem(
-                            value: 'delete',
-                            child: Row(
-                              children: [
-                                Icon(Icons.delete_outline),
-                                SizedBox(width: 10),
-                                Text('Sil'),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                      const Icon(Icons.chevron_right),
-                    ],
-                  ),
-                  onTap: () => _openProjectTasks(
-                      projectId: projectId, projectName: name),
-                ),
+              final isOwner = ownerId == uid;
+
+              if (isOwner) {
+                return _buildProjectCard(
+                  projectId: projectId,
+                  name: name,
+                  primaryLang: primaryLang,
+                  breakdown: breakdown,
+                  isOwner: true,
+                );
+              }
+
+              return FutureBuilder<bool>(
+                future: _isMemberOfProject(projectId),
+                builder: (context, memberSnap) {
+                  if (memberSnap.connectionState == ConnectionState.waiting) {
+                    return const SizedBox.shrink();
+                  }
+
+                  final isMember = memberSnap.data == true;
+                  if (!isMember) {
+                    return const SizedBox.shrink();
+                  }
+
+                  return _buildProjectCard(
+                    projectId: projectId,
+                    name: name,
+                    primaryLang: primaryLang,
+                    breakdown: breakdown,
+                    isOwner: false,
+                  );
+                },
               );
             },
           );

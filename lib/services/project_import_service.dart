@@ -1,4 +1,4 @@
-import 'dart:io';
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:archive/archive.dart';
@@ -7,17 +7,24 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:path/path.dart' as p;
 
+import '../models/analysis_result.dart';
+import 'analysis_service.dart';
+import 'file_filter_service.dart';
+
 class ProjectImportResult {
   final String projectName;
   final String primaryLanguage;
 
-  /// GitHub benzeri istatistik:
+  /// GitHub benzeri yüzdeler:
   /// Örn: {"Dart": 92, "HTML": 8}
   final Map<String, int> languageStats;
 
   final int fileCount;
   final int totalBytes;
   final String? archiveUrl;
+
+  /// ✅ Kod analiz sonucu (LOC, TODO, comment vs.)
+  final AnalysisResult analysis;
 
   ProjectImportResult({
     required this.projectName,
@@ -26,6 +33,7 @@ class ProjectImportResult {
     required this.fileCount,
     required this.totalBytes,
     required this.archiveUrl,
+    required this.analysis,
   });
 }
 
@@ -34,61 +42,155 @@ class ProjectImportService {
   final _auth = FirebaseAuth.instance;
   final _storage = FirebaseStorage.instance;
 
+  final AnalysisService _analysisService;
+  final FileFilterService _filter;
+
+  ProjectImportService({
+    AnalysisService? analysisService,
+    FileFilterService? filter,
+  })  : _filter = filter ?? FileFilterService(),
+        _analysisService = analysisService ??
+            AnalysisService(filter: filter ?? FileFilterService());
+
   String get _uid {
     final u = _auth.currentUser;
     if (u == null) throw Exception('Oturum yok. Lütfen tekrar giriş yap.');
     return u.uid;
   }
 
-  /// ZIP seçildikten sonra bunu çağıracağız.
-  Future<ProjectImportResult> importZipAsProject(File zipFile) async {
-    final bytes = await zipFile.readAsBytes();
-    final archive = ZipDecoder().decodeBytes(bytes);
+  /// ✅ Statik analiz ekranı için: projects/{projectId}.analysis alanını okur.
+  Future<AnalysisResult?> getProjectAnalysis(String projectId) async {
+    final snap = await _db.collection('projects').doc(projectId).get();
+    if (!snap.exists) return null;
 
-    // 1) En üst klasör adı = proje adı
+    final data = snap.data();
+    if (data == null) return null;
+
+    final raw = data['analysis'];
+    if (raw is Map<String, dynamic>) {
+      return AnalysisResult.fromMap(raw);
+    }
+    if (raw is Map) {
+      return AnalysisResult.fromMap(Map<String, dynamic>.from(raw));
+    }
+    return null;
+  }
+
+  /// ✅ WEB-uyumlu import: zip bytes -> analiz -> firestore (+opsiyonel storage upload)
+  Future<ProjectImportResult> importZipBytesAsProject({
+    required Uint8List bytes,
+    required String originalFileName,
+  }) async {
+    print(
+        'IMPORT DEBUG -> START file=$originalFileName bytes=${bytes.length} uid=$_uid');
+
+    // 0) Decode
+    print('IMPORT DEBUG -> zip decode start');
+    final archive = ZipDecoder().decodeBytes(bytes);
+    print('IMPORT DEBUG -> zip decode done files=${archive.files.length}');
+
+    // 1) Proje adı
     final topFolder = _extractTopFolderName(archive) ??
-        p.basenameWithoutExtension(zipFile.path);
+        p.basenameWithoutExtension(originalFileName);
     final projectName = topFolder.trim().isEmpty ? 'project' : topFolder.trim();
 
-    // 2) GitHub benzeri dil tespiti (Flutter öncelikli + ignore + ağırlık)
+    // 2) Dil yüzdeleri
     final stats = _detectLanguagePercentsGitHubLike(archive);
-
-    // Flutter tespiti (primaryLanguage kilitlemek için)
     final isFlutter = _isFlutterArchive(archive);
+    final primaryLang =
+        _pickPrimaryLanguageFromPercents(stats, isFlutter: isFlutter);
 
-    final primaryLang = _pickPrimaryLanguageFromPercents(
-      stats,
-      isFlutter: isFlutter,
-    );
+    // 3) Zip içinden path -> bytes map çıkar
+    final filesByPath = <String, List<int>>{};
+    int skippedIgnored = 0;
+    int skippedNoContent = 0;
 
-    // 3) Storage’a ZIP upload (opsiyonel)
-    final archiveUrl = await _uploadZip(zipFile, projectName);
+    for (final f in archive.files) {
+      if (!f.isFile) continue;
 
-    // 4) Firestore’a yaz
-    await _db.collection('projects').add({
+      final raw = f.name.replaceAll('\\', '/');
+      final lower = raw.toLowerCase();
+
+      if (_shouldIgnorePath(lower)) {
+        skippedIgnored++;
+        continue;
+      }
+
+      final content = f.content;
+      if (content == null) {
+        skippedNoContent++;
+        continue;
+      }
+
+      if (content is List<int>) {
+        filesByPath[raw] = content;
+      } else if (content is Uint8List) {
+        filesByPath[raw] = content.toList();
+      } else {
+        try {
+          filesByPath[raw] =
+              Uint8List.fromList(List<int>.from(content as dynamic)).toList();
+        } catch (_) {
+          // ignore unknown
+        }
+      }
+    }
+
+    print(
+        'IMPORT DEBUG -> extracted files=${filesByPath.length} skippedIgnored=$skippedIgnored skippedNoContent=$skippedNoContent');
+
+    // 4) Kod analizi
+    print('IMPORT DEBUG -> analysis start');
+    final analysis = _analysisService.analyzeFiles(filesByPath);
+    print(
+        'IMPORT DEBUG -> analysis done totalFiles=${analysis.totalFiles} totalLines=${analysis.totalLines} langs=${analysis.languages.length}');
+
+    // 5) Storage upload (OPSİYONEL + TIMEOUT)
+    String? archiveUrl;
+    try {
+      print('IMPORT DEBUG -> upload start (timeout 20s)');
+      archiveUrl = await _uploadZipBytes(bytes, projectName, originalFileName)
+          .timeout(const Duration(seconds: 20));
+      print('IMPORT DEBUG -> upload done url=${archiveUrl ?? "NULL"}');
+    } catch (e) {
+      // upload patlasa bile import devam edecek
+      print('IMPORT DEBUG -> upload FAILED (continuing) error=$e');
+      archiveUrl = null;
+    }
+
+    // 6) Firestore’a yaz
+    print('IMPORT DEBUG -> firestore add start');
+    final ref = await _db.collection('projects').add({
       'name': projectName,
       'ownerId': _uid,
       'primaryLanguage': primaryLang,
-      'languageStats': stats, // {"Dart": 92, "HTML": 8}
-      'fileCount': _countFiles(archive),
-      'archiveName': p.basename(zipFile.path),
-      'archiveUrl': archiveUrl,
+      'languageStats': stats,
+      'analysis': analysis.toMap(),
+      'fileCount': analysis.totalFiles,
+      'ignoredFiles': analysis.ignoredFiles,
+      'totalBytes': bytes.length,
+      'archiveName': originalFileName,
+      'archiveUrl': archiveUrl, // null olabilir
       'createdAt': FieldValue.serverTimestamp(),
       'updatedAt': FieldValue.serverTimestamp(),
       'importType': 'zip',
     });
+    print('IMPORT DEBUG -> firestore add done projectId=${ref.id}');
 
     return ProjectImportResult(
       projectName: projectName,
       primaryLanguage: primaryLang,
       languageStats: stats,
-      fileCount: _countFiles(archive),
+      fileCount: analysis.totalFiles,
       totalBytes: bytes.length,
       archiveUrl: archiveUrl,
+      analysis: analysis,
     );
   }
 
-  int _countFiles(Archive a) => a.files.where((f) => f.isFile).length;
+  // -------------------------------
+  // ✅ GitHub-benzeri dil tespiti
+  // -------------------------------
 
   String? _extractTopFolderName(Archive a) {
     final paths =
@@ -104,13 +206,9 @@ class ProjectImportService {
     if (counts.isEmpty) return null;
 
     final sorted = counts.entries.toList()
-      ..sort((a, b) => b.value.compareTo(a.value));
+      ..sort((x, y) => y.value.compareTo(x.value));
     return sorted.first.key;
   }
-
-  // -------------------------------
-  // ✅ GitHub-benzeri dil tespiti
-  // -------------------------------
 
   bool _isFlutterArchive(Archive a) {
     bool hasFileEnding(String fileName) {
@@ -122,10 +220,8 @@ class ProjectImportService {
       });
     }
 
-    // pubspec.yaml en güçlü sinyal
     if (hasFileEnding('pubspec.yaml')) return true;
 
-    // destekleyici sinyaller
     final hasMainDart = a.files.any((f) {
       if (!f.isFile) return false;
       final n = f.name.replaceAll('\\', '/').toLowerCase();
@@ -175,16 +271,12 @@ class ProjectImportService {
       final raw = f.name.replaceAll('\\', '/');
       final nameLower = raw.toLowerCase();
 
-      // Ignore
       if (_shouldIgnorePath(nameLower)) continue;
 
       final ext = p.extension(nameLower);
       final lang = extToLang[ext];
       if (lang == null) continue;
 
-      // Ağırlıklar:
-      // - lib/ altı: 5x (Flutter projede Dart net çıksın)
-      // - diğerleri: 1x
       final inLib = nameLower.startsWith('lib/') || nameLower.contains('/lib/');
       final weight = inLib ? 5.0 : 1.0;
 
@@ -192,7 +284,6 @@ class ProjectImportService {
       totalScore += weight;
     }
 
-    // Flutter ise ama Dart çıkmadıysa, Dart'ı küçük payla ekle
     if (isFlutter && !scores.containsKey('Dart')) {
       scores['Dart'] = (scores['Dart'] ?? 0) + 1.0;
       totalScore += 1.0;
@@ -202,7 +293,7 @@ class ProjectImportService {
 
     final percents = <String, int>{};
     final entries = scores.entries.toList()
-      ..sort((a, b) => b.value.compareTo(a.value));
+      ..sort((x, y) => y.value.compareTo(x.value));
 
     int sum = 0;
     for (final e in entries) {
@@ -211,7 +302,6 @@ class ProjectImportService {
       sum += pct;
     }
 
-    // rounding düzeltmesi
     if (percents.isNotEmpty && sum != 100) {
       final topLang = entries.first.key;
       percents[topLang] = (percents[topLang] ?? 0) + (100 - sum);
@@ -221,8 +311,9 @@ class ProjectImportService {
   }
 
   bool _shouldIgnorePath(String pathLower) {
-    // normalize
     final pth = pathLower.replaceAll('\\', '/');
+
+    if (pth.endsWith('/.ds_store') || pth.endsWith('thumbs.db')) return true;
 
     const ignoreContains = [
       '/node_modules/',
@@ -236,12 +327,10 @@ class ProjectImportService {
       '/pods/',
       '/deriveddata/',
     ];
-
     for (final token in ignoreContains) {
       if (pth.contains(token)) return true;
     }
 
-    // ✅ Platform klasörleri: hem "android/..." hem "/android/..." yakala
     bool isPlatformFolder(String folder) {
       return pth.startsWith('$folder/') || pth.contains('/$folder/');
     }
@@ -262,25 +351,28 @@ class ProjectImportService {
     required bool isFlutter,
   }) {
     if (percents.isEmpty) return 'Unknown';
-
-    // ✅ Flutter projelerinde Dart varsa primary her zaman Dart
-    if (isFlutter && (percents['Dart'] ?? 0) > 0) {
-      return 'Dart';
-    }
+    if (isFlutter && (percents['Dart'] ?? 0) > 0) return 'Dart';
 
     final sorted = percents.entries.toList()
-      ..sort((a, b) => b.value.compareTo(a.value));
+      ..sort((x, y) => y.value.compareTo(x.value));
     return sorted.first.key;
   }
 
-  Future<String?> _uploadZip(File zipFile, String projectName) async {
+  Future<String?> _uploadZipBytes(
+    Uint8List zipBytes,
+    String projectName,
+    String originalFileName,
+  ) async {
+    final safeName = p.basenameWithoutExtension(originalFileName);
     final ref = _storage.ref(
-      'uploads/${_uid}/${DateTime.now().millisecondsSinceEpoch}_$projectName.zip',
+      'uploads/$_uid/${DateTime.now().millisecondsSinceEpoch}_${safeName}_$projectName.zip',
     );
-    final task = await ref.putFile(
-      zipFile,
+
+    final task = await ref.putData(
+      zipBytes,
       SettableMetadata(contentType: 'application/zip'),
     );
+
     return task.ref.getDownloadURL();
   }
 }

@@ -53,6 +53,18 @@ class TaskService {
     return d;
   }
 
+  String? _cleanAssigneeId(String? assigneeId) {
+    final a = assigneeId?.trim();
+    if (a == null || a.isEmpty) return null;
+    return a;
+  }
+
+  String? _cleanAssigneeEmail(String? assigneeEmail) {
+    final a = assigneeEmail?.trim().toLowerCase();
+    if (a == null || a.isEmpty) return null;
+    return a;
+  }
+
   // ✅ activity log yazıcı (log hatası uygulamayı kırmasın)
   Future<void> _log({
     required String projectId,
@@ -91,12 +103,18 @@ class TaskService {
     String status = 'todo',
     Map<String, dynamic>? ai,
     bool aiGenerated = false,
+
+    // ✅ yeni
+    String? assigneeId,
+    String? assigneeEmail,
   }) async {
     final pid = projectId.trim();
     final t = _cleanTitle(title);
     final d = _cleanDescription(description);
     final s = _cleanStatus(status);
     final pr = _cleanPriority(priority);
+    final cleanedAssigneeId = _cleanAssigneeId(assigneeId);
+    final cleanedAssigneeEmail = _cleanAssigneeEmail(assigneeEmail);
 
     try {
       final uid = _uid;
@@ -110,6 +128,11 @@ class TaskService {
         'status': s,
         if (ai != null) 'ai': ai,
         'aiGenerated': aiGenerated,
+
+        // ✅ atanan üye
+        if (cleanedAssigneeId != null) 'assigneeId': cleanedAssigneeId,
+        if (cleanedAssigneeEmail != null) 'assigneeEmail': cleanedAssigneeEmail,
+
         'ownerId': uid,
         'createdAt': FieldValue.serverTimestamp(),
         'updatedAt': FieldValue.serverTimestamp(),
@@ -120,7 +143,13 @@ class TaskService {
         action: 'created',
         taskId: doc.id,
         taskTitle: t,
-        meta: {'status': s, 'aiGenerated': aiGenerated, 'priority': pr},
+        meta: {
+          'status': s,
+          'aiGenerated': aiGenerated,
+          'priority': pr,
+          if (cleanedAssigneeEmail != null)
+            'assigneeEmail': cleanedAssigneeEmail,
+        },
       );
     } on FirebaseException catch (e) {
       throw Exception('Firestore hata: ${e.message ?? e.code}');
@@ -137,6 +166,10 @@ class TaskService {
     String? description,
     required int priority,
     required DateTime dueDate,
+
+    // ✅ yeni
+    String? assigneeId,
+    String? assigneeEmail,
   }) async {
     final pid = projectId.trim();
     final tid = taskId.trim();
@@ -145,6 +178,8 @@ class TaskService {
     final t = _cleanTitle(title);
     final d = _cleanDescription(description);
     final pr = _cleanPriority(priority);
+    final cleanedAssigneeId = _cleanAssigneeId(assigneeId);
+    final cleanedAssigneeEmail = _cleanAssigneeEmail(assigneeEmail);
 
     try {
       await _tasksRef(pid).doc(tid).update({
@@ -152,6 +187,11 @@ class TaskService {
         'description': d,
         'priority': pr,
         'dueDate': Timestamp.fromDate(dueDate),
+
+        // ✅ atanan üye güncelle
+        'assigneeId': cleanedAssigneeId,
+        'assigneeEmail': cleanedAssigneeEmail,
+
         'updatedAt': FieldValue.serverTimestamp(),
       });
 
@@ -160,7 +200,11 @@ class TaskService {
         action: 'updated',
         taskId: tid,
         taskTitle: t,
-        meta: {'priority': pr},
+        meta: {
+          'priority': pr,
+          if (cleanedAssigneeEmail != null)
+            'assigneeEmail': cleanedAssigneeEmail,
+        },
       );
     } on FirebaseException catch (e) {
       throw Exception('Firestore hata: ${e.message ?? e.code}');
@@ -179,6 +223,11 @@ class TaskService {
     DateTime? dueDate,
     String? status,
     Map<String, dynamic>? ai,
+
+    // ✅ yeni
+    String? assigneeId,
+    String? assigneeEmail,
+    bool updateAssignee = false,
   }) async {
     final pid = projectId.trim();
     final tid = taskId.trim();
@@ -191,15 +240,19 @@ class TaskService {
     if (title != null) data['title'] = _cleanTitle(title);
 
     if (description != null) {
-      // description paramı geldiyse: boşsa null'a çek
       data['description'] = _cleanDescription(description);
     }
 
     if (priority != null) data['priority'] = _cleanPriority(priority);
     if (dueDate != null) data['dueDate'] = Timestamp.fromDate(dueDate);
-
     if (status != null) data['status'] = _cleanStatus(status);
     if (ai != null) data['ai'] = ai;
+
+    // ✅ assignee partial update
+    if (updateAssignee) {
+      data['assigneeId'] = _cleanAssigneeId(assigneeId);
+      data['assigneeEmail'] = _cleanAssigneeEmail(assigneeEmail);
+    }
 
     if (data.length == 1) return; // sadece updatedAt -> boş update yok
 
@@ -210,11 +263,13 @@ class TaskService {
         projectId: pid,
         action: 'updated',
         taskId: tid,
-        taskTitle: title, // null olabilir
+        taskTitle: title,
         meta: {
           if (status != null) 'status': status,
           if (priority != null) 'priority': _cleanPriority(priority),
           if (ai != null) 'aiUpdated': true,
+          if (updateAssignee)
+            'assigneeEmail': _cleanAssigneeEmail(assigneeEmail),
         },
       );
     } on FirebaseException catch (e) {
@@ -316,7 +371,7 @@ class TaskService {
     required String projectId,
     required String orderByField,
     required bool descending,
-    String? statusFilter, // all/todo/doing/done
+    String? statusFilter,
   }) {
     final pid = projectId.trim();
 
@@ -330,7 +385,6 @@ class TaskService {
     final sf = statusFilter?.trim().toLowerCase();
     if (sf != null && sf.isNotEmpty && sf != 'all') {
       q = q.where('status', isEqualTo: _cleanStatus(sf));
-      // Not: Firestore index isteyebilir -> console linki çıkar
     }
 
     return q.snapshots();

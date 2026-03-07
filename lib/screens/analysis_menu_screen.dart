@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../theme/app_theme.dart';
+import 'static_analysis_screen.dart';
 
 class AnalysisMenuScreen extends StatelessWidget {
   final String? projectId;
@@ -18,33 +19,75 @@ class AnalysisMenuScreen extends StatelessWidget {
       projectName != null &&
       projectName!.trim().isNotEmpty;
 
-  void _goToProjects(BuildContext context) {
-    // ProjectsScreen'e push yapmak yerine geri dön.
-    // (Döngüsel importu engeller)
+  void _goBackOrProjectsHint(BuildContext context) {
+    // En güvenlisi: geri dön.
     if (Navigator.canPop(context)) {
       Navigator.pop(context);
       return;
     }
 
-    // Eğer buraya "direkt" girildiyse ve geri dönülemiyorsa:
-    Navigator.of(context).pushNamed('/projects');
-    // Not: named route kullanmıyorsan bu satırı silebilirsin.
+    // Eğer buraya direkt girildiyse ve geri dönemiyorsa:
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content:
+            Text('Proje seçmek için önce "Projelerim" ekranına gitmelisin.'),
+      ),
+    );
+  }
+
+  void _openStaticAnalysis(BuildContext context) {
+    if (!_hasProject) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Önce proje seçmelisin.')),
+      );
+      return;
+    }
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => StaticAnalysisScreen(
+          projectId: projectId!,
+          projectName: projectName!,
+        ),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-    final name = _hasProject ? projectName! : 'Proje seç';
+    final titleName = _hasProject ? projectName!.trim() : 'Proje seç';
 
     return Scaffold(
       appBar: AppBar(
         backgroundColor: AppColors.navy,
-        title: Text('Kod Analizi • $name'),
+        title: Text('Kod Analizi • $titleName'),
       ),
       body: Padding(
         padding: const EdgeInsets.all(16),
         child: _hasProject
-            ? _MethodsBody(projectName: projectName!)
-            : _NoProjectBody(onSelectProject: () => _goToProjects(context)),
+            ? _MethodsBody(
+                projectName: projectName!.trim(),
+                onStaticAnalysis: () => _openStaticAnalysis(context),
+                onQualityRules: () {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content:
+                          Text('Kod kalitesi analizi: $titleName (yakında)'),
+                    ),
+                  );
+                },
+                onLlm: () {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('LLM analizi: $titleName (yakında)'),
+                    ),
+                  );
+                },
+              )
+            : _NoProjectBody(
+                onSelectProject: () => _goBackOrProjectsHint(context),
+              ),
       ),
     );
   }
@@ -81,7 +124,7 @@ class _NoProjectBody extends StatelessWidget {
               FilledButton.icon(
                 onPressed: onSelectProject,
                 icon: const Icon(Icons.folder_open),
-                label: const Text('Projelerim’e git'),
+                label: const Text('Geri dön (Projelerim)'),
               ),
             ],
           ),
@@ -94,7 +137,16 @@ class _NoProjectBody extends StatelessWidget {
 class _MethodsBody extends StatelessWidget {
   final String projectName;
 
-  const _MethodsBody({required this.projectName});
+  final VoidCallback onStaticAnalysis;
+  final VoidCallback onQualityRules;
+  final VoidCallback onLlm;
+
+  const _MethodsBody({
+    required this.projectName,
+    required this.onStaticAnalysis,
+    required this.onQualityRules,
+    required this.onLlm,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -115,40 +167,21 @@ class _MethodsBody extends StatelessWidget {
           title: 'Statik Analiz (Temel)',
           subtitle: 'Dosya sayısı, dil dağılımı, basit metrikler',
           icon: Icons.analytics_outlined,
-          onTap: () {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text('Statik analiz başlatılacak: $projectName'),
-              ),
-            );
-          },
+          onTap: onStaticAnalysis,
         ),
         const SizedBox(height: 12),
         _MethodCard(
           title: 'Kod Kalitesi (Kurallar)',
           subtitle: 'Smell tespiti, basit kurallar, öneriler',
           icon: Icons.rule_folder_outlined,
-          onTap: () {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content:
-                    Text('Kod kalitesi analizi başlatılacak: $projectName'),
-              ),
-            );
-          },
+          onTap: onQualityRules,
         ),
         const SizedBox(height: 12),
         _MethodCard(
           title: 'LLM Destekli Analiz',
           subtitle: 'Özet, riskler, refactor önerileri',
           icon: Icons.auto_awesome,
-          onTap: () {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text('LLM analizi başlatılacak: $projectName'),
-              ),
-            );
-          },
+          onTap: onLlm,
         ),
       ],
     );
@@ -177,8 +210,10 @@ class _MethodCard extends StatelessWidget {
           child: Icon(icon, color: AppColors.teal),
         ),
         title: Text(title, style: const TextStyle(fontWeight: FontWeight.w800)),
-        subtitle:
-            Text(subtitle, style: const TextStyle(color: AppColors.textSoft)),
+        subtitle: Text(
+          subtitle,
+          style: const TextStyle(color: AppColors.textSoft),
+        ),
         trailing: const Icon(Icons.chevron_right),
         onTap: onTap,
       ),
