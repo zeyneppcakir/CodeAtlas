@@ -21,9 +21,9 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
 
   final Map<String, Future<bool>> _memberCheckCache = {};
 
-  String _safeText(dynamic v, String fallback) {
-    final s = (v ?? '').toString().trim();
-    return s.isEmpty ? fallback : s;
+  String _safeText(dynamic value, String fallback) {
+    final text = (value ?? '').toString().trim();
+    return text.isEmpty ? fallback : text;
   }
 
   String? get _uid => _auth.currentUser?.uid;
@@ -54,7 +54,7 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
     return await showDialog<bool>(
           context: context,
           builder: (_) => AlertDialog(
-            title: const Text('Projeyi sil?'),
+            title: const Text('Projeyi silmek istiyor musun?'),
             content: Text(
               '"$projectName" projesini siliyorsun.\nBu işlem geri alınamaz.',
             ),
@@ -77,20 +77,20 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
     required String projectId,
     required String projectName,
   }) async {
-    final ok = await _confirmDelete(context, projectName);
-    if (!ok) return;
+    final approved = await _confirmDelete(context, projectName);
+    if (!approved) return;
 
     try {
       await _service.deleteProject(projectId);
 
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('"$projectName" silindi')),
+        SnackBar(content: Text('"$projectName" silindi.')),
       );
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Silinemedi: $e')),
+        SnackBar(content: Text('Proje silinemedi: $e')),
       );
     }
   }
@@ -103,25 +103,28 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
     if (rawStats is! Map) return '';
 
     final entries = <MapEntry<String, int>>[];
-    rawStats.forEach((k, v) {
-      final key = k?.toString().trim();
-      if (key == null || key.isEmpty) return;
 
-      int? val;
-      if (v is int) val = v;
-      if (v is double) val = v.round();
-      if (v is String) val = int.tryParse(v);
+    rawStats.forEach((key, value) {
+      final lang = key?.toString().trim();
+      if (lang == null || lang.isEmpty) return;
 
-      if (val == null || val <= 0) return;
-      entries.add(MapEntry(key, val));
+      int? parsedValue;
+      if (value is int) parsedValue = value;
+      if (value is double) parsedValue = value.round();
+      if (value is String) parsedValue = int.tryParse(value);
+
+      if (parsedValue == null || parsedValue <= 0) return;
+
+      entries.add(MapEntry(lang, parsedValue));
     });
 
     if (entries.isEmpty) return '';
+
     entries.sort((a, b) => b.value.compareTo(a.value));
 
     if (primaryLang != null && primaryLang.trim().isNotEmpty) {
       entries.removeWhere(
-        (e) => e.key.toLowerCase() == primaryLang.toLowerCase(),
+        (entry) => entry.key.toLowerCase() == primaryLang.toLowerCase(),
       );
     }
 
@@ -134,7 +137,9 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
   Future<void> _openImport() async {
     await Navigator.push(
       context,
-      MaterialPageRoute(builder: (_) => const ImportProjectScreen()),
+      MaterialPageRoute(
+        builder: (_) => const ImportProjectScreen(),
+      ),
     );
   }
 
@@ -143,7 +148,9 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
     required String projectName,
   }) {
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('AI Analiz (yakında): $projectName')),
+      SnackBar(
+        content: Text('LLM destekli analiz yakında eklenecek: $projectName'),
+      ),
     );
   }
 
@@ -195,7 +202,7 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
         ),
       ),
       child: Text(
-        isOwner ? 'Owner' : 'Member',
+        isOwner ? 'Sahip' : 'Üye',
         style: TextStyle(
           fontSize: 12,
           color: isOwner ? AppColors.teal : AppColors.textSoft,
@@ -221,7 +228,7 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
         subtitle: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Dil: $primaryLang'),
+            Text('Baskın dil: $primaryLang'),
             if (breakdown.isNotEmpty)
               Padding(
                 padding: const EdgeInsets.only(top: 4),
@@ -290,7 +297,7 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
                     children: [
                       Icon(Icons.auto_awesome_outlined),
                       SizedBox(width: 10),
-                      Text('AI Analiz Et'),
+                      Text('LLM Destekli Analiz'),
                     ],
                   ),
                 ),
@@ -301,7 +308,7 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
                       children: [
                         Icon(Icons.delete_outline),
                         SizedBox(width: 10),
-                        Text('Sil'),
+                        Text('Projeyi Sil'),
                       ],
                     ),
                   ),
@@ -320,36 +327,10 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    debugPrint('>>> ProjectsScreen BUILD (NEW TEST)');
-
     return Scaffold(
       appBar: AppBar(
         backgroundColor: AppColors.navy,
-        title: const Text('Projelerim (NEW)'),
-        actions: const [
-          Padding(
-            padding: EdgeInsets.only(right: 12),
-            child: Center(
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  color: Colors.orange,
-                  borderRadius: BorderRadius.all(Radius.circular(999)),
-                ),
-                child: Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                  child: Text(
-                    'NEW',
-                    style: TextStyle(
-                      fontWeight: FontWeight.w800,
-                      color: Colors.black,
-                      fontSize: 12,
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ],
+        title: const Text('Projelerim'),
       ),
       floatingActionButton: FloatingActionButton(
         backgroundColor: AppColors.teal,
@@ -368,7 +349,7 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
               child: Padding(
                 padding: const EdgeInsets.all(16),
                 child: Text(
-                  'Hata: ${snapshot.error}',
+                  'Bir hata oluştu: ${snapshot.error}',
                   style: const TextStyle(color: AppColors.textSoft),
                 ),
               ),
@@ -396,12 +377,25 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
             );
           }
 
+          if (docs.isEmpty) {
+            return const Center(
+              child: Padding(
+                padding: EdgeInsets.all(16),
+                child: Text(
+                  'Henüz hiç proje bulunmuyor.\nSağ alttaki buton ile proje ekleyebilirsin.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: AppColors.textSoft),
+                ),
+              ),
+            );
+          }
+
           return ListView.separated(
             padding: const EdgeInsets.all(12),
             itemCount: docs.length,
             separatorBuilder: (_, __) => const SizedBox(height: 10),
-            itemBuilder: (context, i) {
-              final doc = docs[i];
+            itemBuilder: (context, index) {
+              final doc = docs[index];
               final data = doc.data();
 
               final projectId = doc.id;
@@ -429,12 +423,13 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
 
               return FutureBuilder<bool>(
                 future: _isMemberOfProject(projectId),
-                builder: (context, memberSnap) {
-                  if (memberSnap.connectionState == ConnectionState.waiting) {
+                builder: (context, memberSnapshot) {
+                  if (memberSnapshot.connectionState ==
+                      ConnectionState.waiting) {
                     return const SizedBox.shrink();
                   }
 
-                  final isMember = memberSnap.data == true;
+                  final isMember = memberSnapshot.data == true;
                   if (!isMember) {
                     return const SizedBox.shrink();
                   }

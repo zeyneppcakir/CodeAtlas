@@ -1,5 +1,6 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 
 import 'firebase_options.dart';
@@ -18,6 +19,16 @@ Future<void> main() async {
     options: DefaultFirebaseOptions.currentPlatform,
   );
 
+  // ✅ WEB: Oturumun sayfa yenileyince düşmemesi için (stabilite)
+  if (kIsWeb) {
+    await FirebaseAuth.instance.setPersistence(Persistence.LOCAL);
+  }
+
+  FlutterError.onError = (details) {
+    FlutterError.presentError(details);
+    debugPrint('FlutterError: ${details.exceptionAsString()}');
+  };
+
   runApp(const CodeAtlasApp());
 }
 
@@ -32,8 +43,6 @@ class CodeAtlasApp extends StatelessWidget {
       theme: AppTheme.darkTheme,
       navigatorKey: navKey,
       scaffoldMessengerKey: messengerKey,
-      // Eğer AppTheme.darkTheme Material3 içermiyorsa burada da açabiliriz:
-      // theme: AppTheme.darkTheme.copyWith(useMaterial3: true),
       home: const AuthGate(),
     );
   }
@@ -49,6 +58,20 @@ class AuthGate extends StatelessWidget {
     return StreamBuilder<User?>(
       stream: FirebaseAuth.instance.authStateChanges(),
       builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          return Scaffold(
+            body: Center(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Text(
+                  'Auth hata: ${snapshot.error}',
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            ),
+          );
+        }
+
         if (snapshot.connectionState == ConnectionState.waiting) {
           return const Scaffold(
             body: Center(child: CircularProgressIndicator()),

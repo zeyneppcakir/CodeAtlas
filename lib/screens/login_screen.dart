@@ -1,7 +1,6 @@
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
-import 'package:google_sign_in/google_sign_in.dart';
 
 import '../theme/app_theme.dart';
 import 'home_screen.dart';
@@ -21,8 +20,35 @@ class _LoginScreenState extends State<LoginScreen> {
 
   bool _obscure = true;
   bool _loading = false;
+  bool _handledRedirect = false;
 
-  /// ✅ users/{email} doc'u oluştur/güncelle
+  @override
+  void initState() {
+    super.initState();
+    _handleRedirectResult();
+  }
+
+  Future<void> _handleRedirectResult() async {
+    if (_handledRedirect) return;
+    _handledRedirect = true;
+
+    try {
+      final result = await FirebaseAuth.instance.getRedirectResult();
+      final user = result.user;
+
+      if (user != null) {
+        await _ensureUserDoc(user);
+        if (!mounted) return;
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (_) => const HomeScreen()),
+        );
+      }
+    } catch (e) {
+      debugPrint('REDIRECT RESULT ERROR: $e');
+    }
+  }
+
   Future<void> _ensureUserDoc(User user) async {
     final email = user.email;
     if (email == null) return;
@@ -33,62 +59,60 @@ class _LoginScreenState extends State<LoginScreen> {
       'email': email,
       'uid': user.uid,
       'lastLogin': FieldValue.serverTimestamp(),
-      // createdAt sadece ilk oluşturmada yazılsın
       'createdAt': FieldValue.serverTimestamp(),
     }, SetOptions(merge: true));
   }
 
-  String? _emailValidator(String? v) {
-    final value = (v ?? '').trim();
-    if (value.isEmpty) return 'E-posta gerekli';
-    final ok = RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(value);
-    if (!ok) return 'Geçerli bir e-posta gir';
-    return null;
-  }
-
-  String? _passValidator(String? v) {
-    final value = (v ?? '');
-    if (value.isEmpty) return 'Şifre gerekli';
-    if (value.length < 6) return 'Şifre en az 6 karakter olmalı';
-    return null;
-  }
-
-  void _snack(String msg) {
+  void _snack(String message) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(msg)),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
   }
 
-  String _mapAuthError(FirebaseAuthException e) {
-    switch (e.code) {
-      case 'user-not-found':
-        return 'Bu e-posta ile kayıtlı kullanıcı yok.';
-      case 'wrong-password':
-        return 'Şifre hatalı.';
-      case 'invalid-credential':
-        return 'E-posta/şifre hatalı.';
-      case 'invalid-email':
-        return 'E-posta formatı geçersiz.';
-      case 'too-many-requests':
-        return 'Çok fazla deneme yapıldı. Biraz sonra tekrar deneyin.';
-      default:
-        return e.message ?? 'Giriş başarısız.';
+  String? _emailValidator(String? value) {
+    final email = (value ?? '').trim();
+
+    if (email.isEmpty) {
+      return 'E-posta gerekli';
     }
+
+    final isValid = RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(email);
+
+    if (!isValid) {
+      return 'Geçerli bir e-posta gir';
+    }
+
+    return null;
+  }
+
+  String? _passValidator(String? value) {
+    final password = value ?? '';
+
+    if (password.isEmpty) {
+      return 'Şifre gerekli';
+    }
+
+    if (password.length < 6) {
+      return 'Şifre en az 6 karakter olmalı';
+    }
+
+    return null;
   }
 
   Future<void> _loginEmail() async {
-    final ok = _formKey.currentState?.validate() ?? false;
-    if (!ok) return;
+    final isValid = _formKey.currentState?.validate() ?? false;
+    if (!isValid) return;
 
     setState(() => _loading = true);
+
     try {
-      final cred = await FirebaseAuth.instance.signInWithEmailAndPassword(
+      final credential = await FirebaseAuth.instance.signInWithEmailAndPassword(
         email: _emailCtrl.text.trim(),
         password: _passCtrl.text,
       );
 
-      final user = cred.user;
+      final user = credential.user;
       if (user != null) {
         await _ensureUserDoc(user);
       }
@@ -99,59 +123,46 @@ class _LoginScreenState extends State<LoginScreen> {
         MaterialPageRoute(builder: (_) => const HomeScreen()),
       );
     } on FirebaseAuthException catch (e) {
-      _snack(_mapAuthError(e));
-    } on FirebaseException catch (e) {
-      debugPrint('FIRESTORE ERROR: ${e.code} - ${e.message}');
-      _snack('Veritabanı hatası: ${e.code}');
+      debugPrint('EMAIL LOGIN ERROR: ${e.code} - ${e.message}');
+      _snack('${e.code}: ${e.message ?? "Giriş başarısız."}');
     } catch (e) {
-      debugPrint('LOGIN ERROR: $e');
-      _snack('Beklenmeyen bir hata oluştu.');
+      debugPrint('EMAIL LOGIN ERROR: $e');
+      _snack('Beklenmeyen hata: $e');
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted) {
+        setState(() => _loading = false);
+      }
     }
   }
 
+  /// Web redirect akışı
   Future<void> _loginWithGoogle() async {
     setState(() => _loading = true);
+
     try {
-      final googleUser = await GoogleSignIn().signIn();
-      if (googleUser == null) return; // kullanıcı vazgeçti
+      final provider = GoogleAuthProvider()
+        ..setCustomParameters({'prompt': 'select_account'});
 
-      final googleAuth = await googleUser.authentication;
-      final credential = GoogleAuthProvider.credential(
-        accessToken: googleAuth.accessToken,
-        idToken: googleAuth.idToken,
-      );
-
-      final cred = await FirebaseAuth.instance.signInWithCredential(credential);
-
-      final user = cred.user;
-      if (user != null) {
-        await _ensureUserDoc(user);
-      }
-
-      if (!mounted) return;
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(builder: (_) => const HomeScreen()),
-      );
+      await FirebaseAuth.instance.signInWithRedirect(provider);
     } on FirebaseAuthException catch (e) {
-      _snack(e.message ?? 'Google ile giriş başarısız.');
-    } on FirebaseException catch (e) {
-      debugPrint('FIRESTORE ERROR: ${e.code} - ${e.message}');
-      _snack('Veritabanı hatası: ${e.code}');
+      debugPrint('GOOGLE REDIRECT ERROR: ${e.code} - ${e.message}');
+      _snack('${e.code}: ${e.message ?? "Google ile giriş başarısız."}');
+      if (mounted) {
+        setState(() => _loading = false);
+      }
     } catch (e) {
-      debugPrint('GOOGLE LOGIN ERROR: $e');
-      _snack('Google giriş hatası oluştu.');
-    } finally {
-      if (mounted) setState(() => _loading = false);
+      debugPrint('GOOGLE REDIRECT ERROR: $e');
+      _snack('Google giriş hatası: $e');
+      if (mounted) {
+        setState(() => _loading = false);
+      }
     }
   }
 
   Future<void> _resetPassword() async {
-    final emailErr = _emailValidator(_emailCtrl.text);
-    if (emailErr != null) {
-      _snack('Önce geçerli e-posta yazmalısın.');
+    final emailError = _emailValidator(_emailCtrl.text);
+    if (emailError != null) {
+      _snack('Önce geçerli bir e-posta yazmalısın.');
       return;
     }
 
@@ -159,9 +170,7 @@ class _LoginScreenState extends State<LoginScreen> {
       await FirebaseAuth.instance.sendPasswordResetEmail(
         email: _emailCtrl.text.trim(),
       );
-      _snack('Şifre sıfırlama bağlantısı e-postana gönderildi.');
-    } on FirebaseAuthException catch (e) {
-      _snack(_mapAuthError(e));
+      _snack('Şifre sıfırlama bağlantısı e-posta adresine gönderildi.');
     } catch (_) {
       _snack('E-posta gönderilemedi.');
     }
@@ -189,8 +198,9 @@ class _LoginScreenState extends State<LoginScreen> {
                 return SingleChildScrollView(
                   padding: EdgeInsets.fromLTRB(20, 20, 20, 20 + bottomInset),
                   child: ConstrainedBox(
-                    constraints:
-                        BoxConstraints(minHeight: constraints.maxHeight - 40),
+                    constraints: BoxConstraints(
+                      minHeight: constraints.maxHeight - 40,
+                    ),
                     child: Center(
                       child: ConstrainedBox(
                         constraints: const BoxConstraints(maxWidth: 460),
@@ -242,8 +252,11 @@ class _LoginScreenState extends State<LoginScreen> {
                                       prefixIcon:
                                           const Icon(Icons.lock_outline),
                                       suffixIcon: IconButton(
-                                        onPressed: () => setState(
-                                            () => _obscure = !_obscure),
+                                        onPressed: _loading
+                                            ? null
+                                            : () => setState(
+                                                  () => _obscure = !_obscure,
+                                                ),
                                         icon: Icon(
                                           _obscure
                                               ? Icons.visibility
@@ -267,7 +280,8 @@ class _LoginScreenState extends State<LoginScreen> {
                                             height: 18,
                                             width: 18,
                                             child: CircularProgressIndicator(
-                                                strokeWidth: 2),
+                                              strokeWidth: 2,
+                                            ),
                                           )
                                         : const Text('Giriş Yap'),
                                   ),
@@ -275,15 +289,6 @@ class _LoginScreenState extends State<LoginScreen> {
                                   OutlinedButton(
                                     onPressed:
                                         _loading ? null : _loginWithGoogle,
-                                    style: OutlinedButton.styleFrom(
-                                      minimumSize: const Size.fromHeight(52),
-                                      side: const BorderSide(
-                                          color: Colors.white24),
-                                      shape: RoundedRectangleBorder(
-                                        borderRadius: BorderRadius.circular(14),
-                                      ),
-                                      foregroundColor: Colors.white,
-                                    ),
                                     child: const Text('Google ile giriş'),
                                   ),
                                   const SizedBox(height: 10),
@@ -293,7 +298,8 @@ class _LoginScreenState extends State<LoginScreen> {
                                       Text(
                                         'Hesabın yok mu? ',
                                         style: TextStyle(
-                                            color: AppColors.textSoft),
+                                          color: AppColors.textSoft,
+                                        ),
                                       ),
                                       TextButton(
                                         onPressed: _loading
@@ -330,16 +336,16 @@ class _LoginScreenState extends State<LoginScreen> {
 class _DotGridPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
-    final bg = Paint()..color = AppColors.navy;
-    canvas.drawRect(Offset.zero & size, bg);
+    final backgroundPaint = Paint()..color = AppColors.navy;
+    canvas.drawRect(Offset.zero & size, backgroundPaint);
 
-    final dot = Paint()..color = Colors.white.withOpacity(0.06);
+    final dotPaint = Paint()..color = Colors.white.withOpacity(0.06);
     const step = 22.0;
-    const r = 1.2;
+    const radius = 1.2;
 
     for (double y = 0; y < size.height; y += step) {
       for (double x = 0; x < size.width; x += step) {
-        canvas.drawCircle(Offset(x, y), r, dot);
+        canvas.drawCircle(Offset(x, y), radius, dotPaint);
       }
     }
   }

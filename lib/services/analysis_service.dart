@@ -9,7 +9,7 @@ class AnalysisService {
   AnalysisService({FileFilterService? filter})
       : filter = filter ?? FileFilterService();
 
-  static const Map<String, String> _extToLang = {
+  static const Map<String, String> _uzantiDilHaritasi = {
     '.dart': 'Dart',
     '.java': 'Java',
     '.kt': 'Kotlin',
@@ -25,7 +25,7 @@ class AnalysisService {
     '.md': 'Markdown',
     '.cs': 'C#',
     '.c': 'C',
-    '.h': 'C/C++ Header',
+    '.h': 'C/C++ Başlık',
     '.cpp': 'C++',
     '.go': 'Go',
     '.rs': 'Rust',
@@ -35,24 +35,28 @@ class AnalysisService {
 
   String detectLanguage(String path) {
     final lower = path.toLowerCase();
-    for (final e in _extToLang.entries) {
-      if (lower.endsWith(e.key)) return e.value;
+
+    for (final entry in _uzantiDilHaritasi.entries) {
+      if (lower.endsWith(entry.key)) {
+        return entry.value;
+      }
     }
-    return 'Other';
+
+    return 'Diğer';
   }
 
   AnalysisResult analyzeFiles(Map<String, List<int>> filesByPath) {
     int totalFiles = 0;
     int ignoredFiles = 0;
-
     int totalBytes = 0;
     int totalLines = 0;
     int codeLines = 0;
     int commentLines = 0;
     int todoCount = 0;
 
-    // Dart 3 record: dil bazında aggregate
-    final Map<String, ({int files, int bytes, int lines})> langAgg = {};
+    // Dil bazlı toplu istatistik
+    final Map<String, ({int files, int bytes, int lines})> languageAggregates =
+        {};
 
     for (final entry in filesByPath.entries) {
       final path = entry.key;
@@ -66,14 +70,15 @@ class AnalysisService {
       totalFiles++;
       totalBytes += bytes.length;
 
-      // Binary ise satır sayımı yapma
+      // Binary dosyalarda satır bazlı analiz yapılmaz
       if (filter.looksBinary(bytes)) {
-        const lang = 'Binary';
-        final prev = langAgg[lang];
-        langAgg[lang] = (
-          files: (prev?.files ?? 0) + 1,
-          bytes: (prev?.bytes ?? 0) + bytes.length,
-          lines: (prev?.lines ?? 0),
+        const language = 'Binary';
+        final previous = languageAggregates[language];
+
+        languageAggregates[language] = (
+          files: (previous?.files ?? 0) + 1,
+          bytes: (previous?.bytes ?? 0) + bytes.length,
+          lines: (previous?.lines ?? 0),
         );
         continue;
       }
@@ -81,26 +86,27 @@ class AnalysisService {
       final text = utf8.decode(bytes, allowMalformed: true);
       final lines = const LineSplitter().convert(text);
 
-      final lang = detectLanguage(path);
-      final prev = langAgg[lang];
-      langAgg[lang] = (
-        files: (prev?.files ?? 0) + 1,
-        bytes: (prev?.bytes ?? 0) + bytes.length,
-        lines: (prev?.lines ?? 0) + lines.length,
+      final language = detectLanguage(path);
+      final previous = languageAggregates[language];
+
+      languageAggregates[language] = (
+        files: (previous?.files ?? 0) + 1,
+        bytes: (previous?.bytes ?? 0) + bytes.length,
+        lines: (previous?.lines ?? 0) + lines.length,
       );
 
       totalLines += lines.length;
 
       for (final line in lines) {
-        final t = line.trim();
-        if (t.isEmpty) continue;
+        final trimmed = line.trim();
 
-        // Basit comment tespiti (dil bağımsız, kaba)
-        final isComment = t.startsWith('//') ||
-            t.startsWith('#') ||
-            t.startsWith('/*') ||
-            t.startsWith('*') ||
-            t.startsWith('--'); // SQL
+        if (trimmed.isEmpty) continue;
+
+        final isComment = trimmed.startsWith('//') ||
+            trimmed.startsWith('#') ||
+            trimmed.startsWith('/*') ||
+            trimmed.startsWith('*') ||
+            trimmed.startsWith('--');
 
         if (isComment) {
           commentLines++;
@@ -108,18 +114,21 @@ class AnalysisService {
           codeLines++;
         }
 
-        final up = t.toUpperCase();
-        if (up.contains('TODO') || up.contains('FIXME')) todoCount++;
+        final upper = trimmed.toUpperCase();
+
+        if (upper.contains('TODO') || upper.contains('FIXME')) {
+          todoCount++;
+        }
       }
     }
 
-    final languageStats = langAgg.entries
+    final languageStats = languageAggregates.entries
         .map(
-          (e) => LanguageStat(
-            language: e.key,
-            files: e.value.files,
-            bytes: e.value.bytes,
-            lines: e.value.lines,
+          (entry) => LanguageStat(
+            language: entry.key,
+            files: entry.value.files,
+            bytes: entry.value.bytes,
+            lines: entry.value.lines,
           ),
         )
         .toList()
