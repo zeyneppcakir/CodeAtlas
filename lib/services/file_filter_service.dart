@@ -1,5 +1,6 @@
 class FileFilterService {
-  // İstenmeyen klasörler (hem kökte hem içte)
+  /// Analiz dışında bırakılacak klasör parçaları
+  /// Hem kökte hem alt klasörlerde kontrol edilir.
   static const List<String> _ignoreTokens = [
     '/node_modules/',
     '/build/',
@@ -13,7 +14,8 @@ class FileFilterService {
     '/deriveddata/',
   ];
 
-  // Platform klasörleri (Flutter proje yapısında genelde analiz dışı)
+  /// Flutter ve benzeri projelerde çoğunlukla analiz dışında bırakılan
+  /// platform klasörleri
   static const List<String> _platformFolders = [
     'android',
     'ios',
@@ -23,44 +25,55 @@ class FileFilterService {
     'web',
   ];
 
+  /// Verilen dosya yolunun analiz dışında bırakılıp bırakılmayacağını belirler.
   bool shouldIgnorePath(String path) {
-    final p = path.replaceAll('\\', '/').toLowerCase();
+    final normalizedPath = path.replaceAll('\\', '/').toLowerCase();
 
     for (final token in _ignoreTokens) {
-      if (p.contains(token)) return true;
+      if (normalizedPath.contains(token)) {
+        return true;
+      }
     }
 
-    // platform folder kontrolü (kökten başlıyorsa veya içerde "/android/" gibi geçiyorsa)
+    // Platform klasörü kontrolü:
+    // Örn: "android/..." veya ".../android/..."
     for (final folder in _platformFolders) {
-      if (p.startsWith('$folder/') || p.contains('/$folder/')) return true;
+      if (normalizedPath.startsWith('$folder/') ||
+          normalizedPath.contains('/$folder/')) {
+        return true;
+      }
     }
 
     return false;
   }
 
-  /// Çok kaba binary tespiti:
-  /// - null byte varsa binary kabul
-  /// - ilk 512 baytta "garip" kontrol karakteri oranı yüksekse binary kabul
+  /// Basit binary dosya tespiti yapar.
+  ///
+  /// Kurallar:
+  /// - Null byte varsa binary kabul edilir.
+  /// - İlk 512 bayt içinde şüpheli kontrol karakteri oranı yüksekse
+  ///   binary kabul edilir.
   bool looksBinary(List<int> bytes) {
     if (bytes.isEmpty) return false;
 
-    final len = bytes.length < 512 ? bytes.length : 512;
+    final sampleLength = bytes.length < 512 ? bytes.length : 512;
+    int suspiciousCount = 0;
 
-    int suspicious = 0;
-    for (int i = 0; i < len; i++) {
-      final b = bytes[i];
+    for (int i = 0; i < sampleLength; i++) {
+      final byte = bytes[i];
 
-      if (b == 0) return true; // null byte => binary
+      // Null byte çoğunlukla binary dosyayı işaret eder
+      if (byte == 0) return true;
 
-      final isAllowedControl = (b == 9 || b == 10 || b == 13); // \t \n \r
-      final isPrintableAscii = (b >= 32 && b <= 126);
+      final isAllowedControl = byte == 9 || byte == 10 || byte == 13;
+      final isPrintableAscii = byte >= 32 && byte <= 126;
 
       if (!isPrintableAscii && !isAllowedControl) {
-        suspicious++;
+        suspiciousCount++;
       }
     }
 
-    // %20'den fazlaysa binary say
-    return suspicious / len > 0.20;
+    // Şüpheli karakter oranı %20'den fazlaysa binary kabul edilir
+    return suspiciousCount / sampleLength > 0.20;
   }
 }

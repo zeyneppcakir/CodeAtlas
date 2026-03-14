@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 
-import '../theme/app_theme.dart';
 import '../models/analysis_result.dart';
 import '../services/project_import_service.dart';
+import '../theme/app_theme.dart';
 
 class StaticAnalysisScreen extends StatefulWidget {
   final String projectId;
@@ -34,16 +34,20 @@ class _StaticAnalysisScreenState extends State<StaticAnalysisScreen> {
     });
   }
 
-  String _fmtBytes(int bytes) {
+  String _formatBytes(int bytes) {
     const units = ['B', 'KB', 'MB', 'GB'];
-    double v = bytes.toDouble();
-    int i = 0;
-    while (v >= 1024 && i < units.length - 1) {
-      v /= 1024;
-      i++;
+    double value = bytes.toDouble();
+    int unitIndex = 0;
+
+    while (value >= 1024 && unitIndex < units.length - 1) {
+      value /= 1024;
+      unitIndex++;
     }
-    final s = (i == 0) ? v.toStringAsFixed(0) : v.toStringAsFixed(1);
-    return '$s ${units[i]}';
+
+    final formatted =
+        unitIndex == 0 ? value.toStringAsFixed(0) : value.toStringAsFixed(1);
+
+    return '$formatted ${units[unitIndex]}';
   }
 
   Widget _metricTile(String label, String value, {IconData? icon}) {
@@ -67,6 +71,178 @@ class _StaticAnalysisScreenState extends State<StaticAnalysisScreen> {
     );
   }
 
+  Widget _buildSummaryCard(AnalysisResult analysis) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Genel Özet',
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+            const SizedBox(height: 12),
+            _metricTile(
+              'Toplam dosya',
+              '${analysis.totalFiles} (hariç tutulan: ${analysis.ignoredFiles})',
+              icon: Icons.insert_drive_file_outlined,
+            ),
+            const SizedBox(height: 8),
+            _metricTile(
+              'Toplam boyut',
+              _formatBytes(analysis.totalBytes),
+              icon: Icons.storage_outlined,
+            ),
+            const SizedBox(height: 8),
+            _metricTile(
+              'Toplam satır',
+              '${analysis.totalLines}',
+              icon: Icons.format_list_numbered,
+            ),
+            const SizedBox(height: 8),
+            _metricTile(
+              'Kod satırı / Yorum satırı',
+              '${analysis.codeLines} / ${analysis.commentLines}',
+              icon: Icons.code,
+            ),
+            const SizedBox(height: 8),
+            _metricTile(
+              'TODO / FIXME sayısı',
+              '${analysis.todoCount}',
+              icon: Icons.checklist,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildLanguageCard(List<LanguageStat> topLanguages) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Dil Dağılımı',
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+            const SizedBox(height: 12),
+            if (topLanguages.isEmpty)
+              const Text(
+                'Dil verisi bulunamadı.',
+                style: TextStyle(color: AppColors.textSoft),
+              )
+            else
+              ...topLanguages.map((language) {
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: Text(
+                          language.language,
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ),
+                      Text(
+                        '${language.files} dosya • '
+                        '${language.lines} satır • '
+                        '${_formatBytes(language.bytes)}',
+                        style: const TextStyle(
+                          color: AppColors.textSoft,
+                        ),
+                        textAlign: TextAlign.right,
+                      ),
+                    ],
+                  ),
+                );
+              }),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTechnicalInfoCard() {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Teknik Bilgiler',
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              'Proje kimliği: ${widget.projectId}',
+              style: const TextStyle(color: AppColors.textSoft),
+            ),
+            Text(
+              'Proje adı: ${widget.projectName}',
+              style: const TextStyle(color: AppColors.textSoft),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAnalysisBody(AnalysisResult analysis) {
+    final languages = [...analysis.languages]
+      ..sort((a, b) => b.bytes.compareTo(a.bytes));
+
+    final topLanguages = languages.take(6).toList();
+
+    return ListView(
+      children: [
+        _buildSummaryCard(analysis),
+        const SizedBox(height: 12),
+        _buildLanguageCard(topLanguages),
+        const SizedBox(height: 12),
+        _buildTechnicalInfoCard(),
+      ],
+    );
+  }
+
+  Widget _buildErrorState(Object error) {
+    return _StateCard(
+      title: 'Bir Hata Oluştu',
+      subtitle: error.toString(),
+      buttonText: 'Tekrar Dene',
+      onPressed: _retry,
+      icon: Icons.error_outline,
+    );
+  }
+
+  Widget _buildEmptyState() {
+    return _StateCard(
+      title: 'Analiz Verisi Bulunamadı',
+      subtitle: 'Bu projede analiz verisi bulunamadı.\n'
+          'Proje daha eski bir yöntemle eklenmiş olabilir.\n'
+          'Projeyi yeniden içe aktarmayı deneyebilirsin.',
+      buttonText: 'Yenile',
+      onPressed: _retry,
+      icon: Icons.info_outline,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -85,157 +261,23 @@ class _StaticAnalysisScreenState extends State<StaticAnalysisScreen> {
         padding: const EdgeInsets.all(16),
         child: FutureBuilder<AnalysisResult?>(
           future: _future,
-          builder: (context, snap) {
-            if (snap.connectionState == ConnectionState.waiting) {
-              return const Center(child: CircularProgressIndicator());
-            }
-
-            if (snap.hasError) {
-              return _StateCard(
-                title: 'Hata',
-                subtitle: snap.error.toString(),
-                buttonText: 'Tekrar dene',
-                onPressed: _retry,
-                icon: Icons.error_outline,
+          builder: (context, snapshot) {
+            if (snapshot.connectionState == ConnectionState.waiting) {
+              return const Center(
+                child: CircularProgressIndicator(),
               );
             }
 
-            final analysis = snap.data;
+            if (snapshot.hasError) {
+              return _buildErrorState(snapshot.error!);
+            }
+
+            final analysis = snapshot.data;
             if (analysis == null) {
-              return _StateCard(
-                title: 'Analiz bulunamadı',
-                subtitle:
-                    'Bu projede "analysis" verisi yok. Muhtemelen eski import ile eklendi.\nProjeyi yeniden import etmeyi dene.',
-                buttonText: 'Yenile',
-                onPressed: _retry,
-                icon: Icons.info_outline,
-              );
+              return _buildEmptyState();
             }
 
-            final langs = [...analysis.languages]
-              ..sort((a, b) => b.bytes.compareTo(a.bytes));
-            final topLangs = langs.take(6).toList();
-
-            return ListView(
-              children: [
-                Card(
-                  child: Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text(
-                          'Özet',
-                          style: TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.w900,
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        _metricTile(
-                          'Dosyalar',
-                          '${analysis.totalFiles} (ignore: ${analysis.ignoredFiles})',
-                          icon: Icons.insert_drive_file_outlined,
-                        ),
-                        const SizedBox(height: 8),
-                        _metricTile(
-                          'Toplam satır',
-                          '${analysis.totalLines}',
-                          icon: Icons.format_list_numbered,
-                        ),
-                        const SizedBox(height: 8),
-                        _metricTile(
-                          'Kod satırı / Yorum satırı',
-                          '${analysis.codeLines} / ${analysis.commentLines}',
-                          icon: Icons.code,
-                        ),
-                        const SizedBox(height: 8),
-                        _metricTile(
-                          'TODO/FIXME',
-                          '${analysis.todoCount}',
-                          icon: Icons.checklist,
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Card(
-                  child: Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text(
-                          'Dil dağılımı (top)',
-                          style: TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.w900,
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        if (topLangs.isEmpty)
-                          const Text(
-                            'Dil verisi yok.',
-                            style: TextStyle(color: AppColors.textSoft),
-                          )
-                        else
-                          ...topLangs.map((l) {
-                            return Padding(
-                              padding: const EdgeInsets.only(bottom: 10),
-                              child: Row(
-                                children: [
-                                  Expanded(
-                                    child: Text(
-                                      l.language,
-                                      style: const TextStyle(
-                                        fontWeight: FontWeight.w800,
-                                      ),
-                                    ),
-                                  ),
-                                  Text(
-                                    '${l.files} dosya • ${l.lines} satır • ${_fmtBytes(l.bytes)}',
-                                    style: const TextStyle(
-                                      color: AppColors.textSoft,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            );
-                          }),
-                      ],
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Card(
-                  child: Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text(
-                          'Debug',
-                          style: TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.w900,
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        Text(
-                          'projectId: ${widget.projectId}',
-                          style: const TextStyle(color: AppColors.textSoft),
-                        ),
-                        Text(
-                          'projectName: ${widget.projectName}',
-                          style: const TextStyle(color: AppColors.textSoft),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ],
-            );
+            return _buildAnalysisBody(analysis);
           },
         ),
       ),
@@ -271,8 +313,10 @@ class _StateCard extends StatelessWidget {
               const SizedBox(height: 10),
               Text(
                 title,
-                style:
-                    const TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
+                style: const TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w900,
+                ),
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 8),

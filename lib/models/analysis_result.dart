@@ -1,3 +1,6 @@
+/// Dil istatistiklerini temsil eden model.
+/// Örneğin:
+/// Dart -> 120 dosya, 35.000 satır
 class LanguageStat {
   final String language;
   final int files;
@@ -11,6 +14,7 @@ class LanguageStat {
     required this.lines,
   });
 
+  /// Map'e çevirme (Firestore / backend için)
   Map<String, dynamic> toMap() => {
         'language': language,
         'files': files,
@@ -18,30 +22,46 @@ class LanguageStat {
         'lines': lines,
       };
 
-  static int _toInt(dynamic v) {
-    if (v == null) return 0;
-    if (v is int) return v;
-    if (v is num) return v.toInt(); // double/num -> int
-    if (v is String) return int.tryParse(v) ?? 0;
+  /// Güvenli int parse fonksiyonu
+  static int _toInt(dynamic value) {
+    if (value == null) return 0;
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    if (value is String) return int.tryParse(value) ?? 0;
     return 0;
   }
 
-  factory LanguageStat.fromMap(Map<String, dynamic> m) => LanguageStat(
-        language: (m['language'] ?? '').toString(),
-        files: _toInt(m['files']),
-        bytes: _toInt(m['bytes']),
-        lines: _toInt(m['lines']),
-      );
+  /// Map -> Model dönüşümü
+  factory LanguageStat.fromMap(Map<String, dynamic> map) {
+    return LanguageStat(
+      language: (map['language'] ?? '').toString(),
+      files: _toInt(map['files']),
+      bytes: _toInt(map['bytes']),
+      lines: _toInt(map['lines']),
+    );
+  }
 }
 
+/// Kod analiz sonucunu temsil eden model.
+/// Backend veya lokal analiz servisinden gelen veriyi tutar.
 class AnalysisResult {
   final int totalFiles;
   final int ignoredFiles;
   final int totalBytes;
+
+  /// Toplam satır sayısı
   final int totalLines;
+
+  /// Gerçek kod satırları
   final int codeLines;
+
+  /// Yorum satırları
   final int commentLines;
+
+  /// TODO sayısı
   final int todoCount;
+
+  /// Dil istatistikleri
   final List<LanguageStat> languages;
 
   const AnalysisResult({
@@ -55,6 +75,7 @@ class AnalysisResult {
     required this.languages,
   });
 
+  /// Model -> Map (Firestore veya backend kayıt için)
   Map<String, dynamic> toMap() => {
         'totalFiles': totalFiles,
         'ignoredFiles': ignoredFiles,
@@ -66,35 +87,42 @@ class AnalysisResult {
         'languages': languages.map((e) => e.toMap()).toList(),
       };
 
-  static int _toInt(dynamic v) {
-    if (v == null) return 0;
-    if (v is int) return v;
-    if (v is num) return v.toInt();
-    if (v is String) return int.tryParse(v) ?? 0;
+  /// Güvenli int parse
+  static int _toInt(dynamic value) {
+    if (value == null) return 0;
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    if (value is String) return int.tryParse(value) ?? 0;
     return 0;
   }
 
-  factory AnalysisResult.fromMap(Map<String, dynamic> m) {
-    final rawLangs = (m['languages'] ?? []);
+  /// Map -> Model dönüşümü
+  factory AnalysisResult.fromMap(Map<String, dynamic> map) {
+    final rawLanguages = map['languages'];
 
-    final langs = <LanguageStat>[];
-    if (rawLangs is List) {
-      for (final e in rawLangs) {
-        if (e is Map) {
-          langs.add(LanguageStat.fromMap(Map<String, dynamic>.from(e)));
+    final languages = <LanguageStat>[];
+
+    if (rawLanguages is List) {
+      for (final item in rawLanguages) {
+        if (item is Map) {
+          languages.add(
+            LanguageStat.fromMap(
+              Map<String, dynamic>.from(item),
+            ),
+          );
         }
       }
     }
 
     return AnalysisResult(
-      totalFiles: _toInt(m['totalFiles']),
-      ignoredFiles: _toInt(m['ignoredFiles']),
-      totalBytes: _toInt(m['totalBytes']),
-      totalLines: _toInt(m['totalLines']),
-      codeLines: _toInt(m['codeLines']),
-      commentLines: _toInt(m['commentLines']),
-      todoCount: _toInt(m['todoCount']),
-      languages: langs,
+      totalFiles: _toInt(map['totalFiles']),
+      ignoredFiles: _toInt(map['ignoredFiles']),
+      totalBytes: _toInt(map['totalBytes']),
+      totalLines: _toInt(map['totalLines']),
+      codeLines: _toInt(map['codeLines']),
+      commentLines: _toInt(map['commentLines']),
+      todoCount: _toInt(map['todoCount']),
+      languages: languages,
     );
   }
 }

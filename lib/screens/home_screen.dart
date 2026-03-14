@@ -1,9 +1,8 @@
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:google_sign_in/google_sign_in.dart';
 
 import '../theme/app_theme.dart';
+import 'analysis_history_screen.dart';
 import 'import_project_screen.dart';
 import 'projects_screen.dart';
 
@@ -14,35 +13,33 @@ class HomeScreen extends StatelessWidget {
     final res = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
-      builder: (ctx) {
-        return AlertDialog(
-          backgroundColor: AppColors.navySoft,
-          title: const Text(
-            'Çıkış yap?',
-            style: TextStyle(
-              color: AppColors.text,
-              fontWeight: FontWeight.w800,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.navySoft,
+        title: const Text(
+          'Çıkış yap?',
+          style: TextStyle(
+            color: AppColors.text,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+        content: const Text(
+          'Oturumun kapatılacak ve tekrar giriş yapman gerekecek.',
+          style: TextStyle(color: AppColors.textSoft),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text(
+              'İptal',
+              style: TextStyle(color: AppColors.textSoft),
             ),
           ),
-          content: const Text(
-            'Oturumun kapatılacak ve tekrar giriş yapman gerekecek.',
-            style: TextStyle(color: AppColors.textSoft),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Çıkış'),
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text(
-                'İptal',
-                style: TextStyle(color: AppColors.textSoft),
-              ),
-            ),
-            ElevatedButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('Çıkış'),
-            ),
-          ],
-        );
-      },
+        ],
+      ),
     );
     return res ?? false;
   }
@@ -51,29 +48,16 @@ class HomeScreen extends StatelessWidget {
     final ok = await _confirmLogout(context);
     if (!ok) return;
 
-    try {
-      // Google ile giriş yaptıysan (özellikle web) signOut mantıklı.
-      // Email/Password girişinde zaten sadece FirebaseAuth.signOut yeter.
-      if (!kIsWeb) {
-        await GoogleSignIn().signOut();
-      }
-    } catch (_) {}
-
     await FirebaseAuth.instance.signOut();
 
     if (!context.mounted) return;
-
-    // ✅ AuthGate otomatik LoginScreen'e döndürecek.
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('Çıkış yapıldı')),
     );
   }
 
   void _goTo(BuildContext context, Widget page) {
-    Navigator.push(
-      context,
-      MaterialPageRoute(builder: (_) => page),
-    );
+    Navigator.push(context, MaterialPageRoute(builder: (_) => page));
   }
 
   @override
@@ -125,33 +109,19 @@ class HomeScreen extends StatelessWidget {
                     icon: Icons.folder_open,
                     onTap: () => _goTo(context, const ProjectsScreen()),
                   ),
+
+                  // ✅ Kod Analizi: Proje seçmeden menü açılmasın
                   _HomeCard(
-                    title: 'Görevler',
-                    subtitle: 'Task ekle / öncelik / bitiş',
-                    icon: Icons.task_alt,
-                    onTap: () {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text(
-                            'Görevler ekranını projeye bağlı olarak yapacağız.',
-                          ),
-                        ),
-                      );
-                    },
+                    title: 'Kod Analizi',
+                    subtitle: 'Önce proje seç → yöntem seç',
+                    icon: Icons.manage_search,
+                    onTap: () => _goTo(context, const ProjectsScreen()),
                   ),
                   _HomeCard(
-                    title: 'Sıralama',
-                    subtitle: 'Zaman / öncelik filtreleri',
-                    icon: Icons.sort,
-                    onTap: () {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text(
-                            'Sıralama özelliği task listesinde olacak.',
-                          ),
-                        ),
-                      );
-                    },
+                    title: 'Analiz Geçmişi',
+                    subtitle: 'Kaydedilen sonuçlar',
+                    icon: Icons.history,
+                    onTap: () => _goTo(context, const AnalysisHistoryScreen()),
                   ),
                 ],
               ),
