@@ -19,18 +19,18 @@ class StaticAnalysisScreen extends StatefulWidget {
 }
 
 class _StaticAnalysisScreenState extends State<StaticAnalysisScreen> {
-  final _importService = ProjectImportService();
-  late Future<AnalysisResult?> _future;
+  final ProjectImportService _importService = ProjectImportService();
+  late Future<AnalysisResult?> _futureAnalysis;
 
   @override
   void initState() {
     super.initState();
-    _future = _importService.getProjectAnalysis(widget.projectId);
+    _futureAnalysis = _importService.getProjectAnalysis(widget.projectId);
   }
 
   void _retry() {
     setState(() {
-      _future = _importService.getProjectAnalysis(widget.projectId);
+      _futureAnalysis = _importService.getProjectAnalysis(widget.projectId);
     });
   }
 
@@ -50,8 +50,13 @@ class _StaticAnalysisScreenState extends State<StaticAnalysisScreen> {
     return '$formatted ${units[unitIndex]}';
   }
 
-  Widget _metricTile(String label, String value, {IconData? icon}) {
+  Widget _metricTile(
+    String label,
+    String value, {
+    IconData? icon,
+  }) {
     return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         if (icon != null) ...[
           Icon(icon, size: 18, color: AppColors.teal),
@@ -63,9 +68,13 @@ class _StaticAnalysisScreenState extends State<StaticAnalysisScreen> {
             style: const TextStyle(color: AppColors.textSoft),
           ),
         ),
-        Text(
-          value,
-          style: const TextStyle(fontWeight: FontWeight.w800),
+        const SizedBox(width: 12),
+        Flexible(
+          child: Text(
+            value,
+            style: const TextStyle(fontWeight: FontWeight.w800),
+            textAlign: TextAlign.right,
+          ),
         ),
       ],
     );
@@ -105,7 +114,7 @@ class _StaticAnalysisScreenState extends State<StaticAnalysisScreen> {
             ),
             const SizedBox(height: 8),
             _metricTile(
-              'Kod satırı / Yorum satırı',
+              'Kod satırı / yorum satırı',
               '${analysis.codeLines} / ${analysis.commentLines}',
               icon: Icons.code,
             ),
@@ -138,7 +147,7 @@ class _StaticAnalysisScreenState extends State<StaticAnalysisScreen> {
             const SizedBox(height: 12),
             if (topLanguages.isEmpty)
               const Text(
-                'Dil verisi bulunamadı.',
+                'Dil bilgisi bulunamadı.',
                 style: TextStyle(color: AppColors.textSoft),
               )
             else
@@ -156,14 +165,17 @@ class _StaticAnalysisScreenState extends State<StaticAnalysisScreen> {
                           ),
                         ),
                       ),
-                      Text(
-                        '${language.files} dosya • '
-                        '${language.lines} satır • '
-                        '${_formatBytes(language.bytes)}',
-                        style: const TextStyle(
-                          color: AppColors.textSoft,
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                          '${language.files} dosya • '
+                          '${language.lines} satır • '
+                          '${_formatBytes(language.bytes)}',
+                          style: const TextStyle(
+                            color: AppColors.textSoft,
+                          ),
+                          textAlign: TextAlign.right,
                         ),
-                        textAlign: TextAlign.right,
                       ),
                     ],
                   ),
@@ -194,6 +206,7 @@ class _StaticAnalysisScreenState extends State<StaticAnalysisScreen> {
               'Proje kimliği: ${widget.projectId}',
               style: const TextStyle(color: AppColors.textSoft),
             ),
+            const SizedBox(height: 4),
             Text(
               'Proje adı: ${widget.projectName}',
               style: const TextStyle(color: AppColors.textSoft),
@@ -223,9 +236,9 @@ class _StaticAnalysisScreenState extends State<StaticAnalysisScreen> {
 
   Widget _buildErrorState(Object error) {
     return _StateCard(
-      title: 'Bir Hata Oluştu',
+      title: 'Bir hata oluştu',
       subtitle: error.toString(),
-      buttonText: 'Tekrar Dene',
+      buttonText: 'Tekrar dene',
       onPressed: _retry,
       icon: Icons.error_outline,
     );
@@ -233,13 +246,29 @@ class _StaticAnalysisScreenState extends State<StaticAnalysisScreen> {
 
   Widget _buildEmptyState() {
     return _StateCard(
-      title: 'Analiz Verisi Bulunamadı',
-      subtitle: 'Bu projede analiz verisi bulunamadı.\n'
+      title: 'Analiz verisi bulunamadı',
+      subtitle: 'Bu proje için analiz verisi bulunamadı.\n'
           'Proje daha eski bir yöntemle eklenmiş olabilir.\n'
           'Projeyi yeniden içe aktarmayı deneyebilirsin.',
       buttonText: 'Yenile',
       onPressed: _retry,
       icon: Icons.info_outline,
+    );
+  }
+
+  Widget _buildLoadingState() {
+    return const Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          CircularProgressIndicator(),
+          SizedBox(height: 12),
+          Text(
+            'Statik analiz verileri yükleniyor...',
+            style: TextStyle(color: AppColors.textSoft),
+          ),
+        ],
+      ),
     );
   }
 
@@ -260,12 +289,10 @@ class _StaticAnalysisScreenState extends State<StaticAnalysisScreen> {
       body: Padding(
         padding: const EdgeInsets.all(16),
         child: FutureBuilder<AnalysisResult?>(
-          future: _future,
+          future: _futureAnalysis,
           builder: (context, snapshot) {
             if (snapshot.connectionState == ConnectionState.waiting) {
-              return const Center(
-                child: CircularProgressIndicator(),
-              );
+              return _buildLoadingState();
             }
 
             if (snapshot.hasError) {

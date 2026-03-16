@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../theme/app_theme.dart';
+import 'llm_analysis_screen.dart';
 import 'static_analysis_screen.dart';
 
 class AnalysisMenuScreen extends StatelessWidget {
@@ -18,7 +19,7 @@ class AnalysisMenuScreen extends StatelessWidget {
         (projectName ?? '').trim().isNotEmpty;
   }
 
-  void _goBackOrProjectsHint(BuildContext context) {
+  void _goBackOrShowProjectsHint(BuildContext context) {
     if (Navigator.canPop(context)) {
       Navigator.pop(context);
       return;
@@ -27,7 +28,7 @@ class AnalysisMenuScreen extends StatelessWidget {
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
         content: Text(
-          'Proje seçmek için önce "Projelerim" ekranına gitmelisin.',
+          'Proje seçebilmek için önce "Projelerim" ekranına gitmelisin.',
         ),
       ),
     );
@@ -37,7 +38,7 @@ class AnalysisMenuScreen extends StatelessWidget {
     if (!_hasProject) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Önce bir proje seçmelisin.'),
+          content: Text('Analiz başlatmadan önce bir proje seçmelisin.'),
         ),
       );
       return;
@@ -54,26 +55,50 @@ class AnalysisMenuScreen extends StatelessWidget {
     );
   }
 
+  void _openLlmAnalysis(BuildContext context) {
+    if (!_hasProject) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('LLM analizini başlatmadan önce bir proje seçmelisin.'),
+        ),
+      );
+      return;
+    }
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => LlmAnalysisScreen(
+          projectId: projectId!.trim(),
+          projectName: projectName!.trim(),
+        ),
+      ),
+    );
+  }
+
   void _showComingSoonMessage(
     BuildContext context, {
     required String featureName,
-    required String titleName,
+    required String selectedProjectName,
   }) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('$featureName: $titleName (yakında eklenecek)'),
+        content: Text(
+          '$featureName özelliği, "$selectedProjectName" projesi için yakında eklenecek.',
+        ),
       ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    final titleName = _hasProject ? projectName!.trim() : 'Proje seçilmedi';
+    final selectedProjectName =
+        _hasProject ? projectName!.trim() : 'Proje seçilmedi';
 
     return Scaffold(
       appBar: AppBar(
         backgroundColor: AppColors.navy,
-        title: Text('Kod Analizi • $titleName'),
+        title: Text('Kod Analizi • $selectedProjectName'),
       ),
       body: Padding(
         padding: const EdgeInsets.all(16),
@@ -84,16 +109,12 @@ class AnalysisMenuScreen extends StatelessWidget {
                 onQualityRules: () => _showComingSoonMessage(
                   context,
                   featureName: 'Kod kalitesi analizi',
-                  titleName: titleName,
+                  selectedProjectName: selectedProjectName,
                 ),
-                onLlm: () => _showComingSoonMessage(
-                  context,
-                  featureName: 'LLM destekli analiz',
-                  titleName: titleName,
-                ),
+                onLlm: () => _openLlmAnalysis(context),
               )
             : _NoProjectBody(
-                onSelectProject: () => _goBackOrProjectsHint(context),
+                onSelectProject: () => _goBackOrShowProjectsHint(context),
               ),
       ),
     );
@@ -128,7 +149,7 @@ class _NoProjectBody extends StatelessWidget {
               ),
               const SizedBox(height: 8),
               const Text(
-                'Kod analizi başlatabilmek için önce bir proje seçmemiz gerekiyor.',
+                'Kod analizi başlatabilmek için önce analiz etmek istediğin projeyi seçmen gerekiyor.',
                 style: TextStyle(color: AppColors.textSoft),
                 textAlign: TextAlign.center,
               ),
@@ -136,7 +157,7 @@ class _NoProjectBody extends StatelessWidget {
               FilledButton.icon(
                 onPressed: onSelectProject,
                 icon: const Icon(Icons.folder_open),
-                label: const Text('Geri Dön (Projelerim)'),
+                label: const Text('Geri Dön'),
               ),
             ],
           ),
@@ -179,21 +200,23 @@ class _MethodsBody extends StatelessWidget {
         const SizedBox(height: 14),
         _MethodCard(
           title: 'Statik Analiz',
-          subtitle: 'Dosya sayısı, dil dağılımı ve temel kod metrikleri',
+          subtitle:
+              'Dosya sayısı, dil dağılımı ve temel kod metriklerini gösterir.',
           icon: Icons.analytics_outlined,
           onTap: onStaticAnalysis,
         ),
         const SizedBox(height: 12),
         _MethodCard(
           title: 'Kod Kalitesi Analizi',
-          subtitle: 'Kod kokuları, temel kurallar ve iyileştirme önerileri',
+          subtitle:
+              'Kod kokuları, temel kurallar ve iyileştirme önerilerini sunar.',
           icon: Icons.rule_folder_outlined,
           onTap: onQualityRules,
         ),
         const SizedBox(height: 12),
         _MethodCard(
           title: 'LLM Destekli Analiz',
-          subtitle: 'Kod özeti, riskler ve yeniden düzenleme önerileri',
+          subtitle: 'Kod özeti, riskler ve geliştirme önerileri sunar.',
           icon: Icons.auto_awesome,
           onTap: onLlm,
         ),

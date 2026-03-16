@@ -1,6 +1,8 @@
 import base64
 import requests
 
+from app.services.llm_service import analyze_with_gemini
+
 
 def parse_github_url(repo_url: str):
     repo_url = repo_url.strip().rstrip("/")
@@ -206,7 +208,43 @@ def get_file_content(owner: str, repo: str, path: str):
         return None
 
 
-def analyze_repo_code(repo_url: str, max_files: int = 30):
+def build_repo_prompt(repo: str, file_contents: list[dict]):
+    combined_text_parts = []
+
+    for item in file_contents:
+        combined_text_parts.append(
+            f"Dosya: {item['path']}\n"
+            f"Dil: {item['language']}\n"
+            f"İçerik:\n{item['content']}\n"
+            f"{'-' * 60}"
+        )
+
+    combined_code = "\n".join(combined_text_parts)
+
+    prompt = f"""
+Sen deneyimli bir yazılım mimarı ve kod analiz uzmanısın.
+
+Aşağıda "{repo}" adlı GitHub reposundan alınmış bazı kaynak kod dosyaları var.
+
+Bu projeyi analiz et ve SADECE Türkçe cevap ver.
+
+Lütfen şu başlıklarda çıktı üret:
+1. Projenin genel amacı
+2. Kullanılan teknolojiler ve diller
+3. Dikkat çeken önemli dosyalar / modüller
+4. Kod kalitesi hakkında kısa yorum
+5. Olası riskler veya eksikler
+6. Geliştirme için 3 somut öneri
+
+Cevabın düzenli ve anlaşılır olsun.
+
+Kodlar:
+{combined_code}
+"""
+    return prompt
+
+
+def analyze_repo_code(repo_url: str, max_files: int = 10):
     owner, repo = parse_github_url(repo_url)
 
     code_paths = get_code_file_paths(owner, repo)
@@ -222,6 +260,7 @@ def analyze_repo_code(repo_url: str, max_files: int = 30):
     language_distribution = {}
 
     file_summaries = []
+    llm_input_files = []
 
     for path in selected_paths:
         content = get_file_content(owner, repo, path)
@@ -275,6 +314,24 @@ def analyze_repo_code(repo_url: str, max_files: int = 30):
             }
         )
 
+        llm_input_files.append(
+            {
+                "path": path,
+                "language": language,
+                "content": content[:4000],
+            }
+        )
+
+    llm_analysis = None
+    llm_error = None
+
+    if llm_input_files:
+        try:
+            prompt = build_repo_prompt(repo, llm_input_files)
+            llm_analysis = analyze_with_gemini(prompt)
+        except Exception as e:
+            llm_error = f"Gemini analizi sırasında hata oluştu: {str(e)}"
+
     return {
         "repo": repo,
         "total_code_files_found": len(code_paths),
@@ -288,4 +345,6 @@ def analyze_repo_code(repo_url: str, max_files: int = 30):
         "bug_count": bug_count,
         "language_distribution": language_distribution,
         "file_summaries": file_summaries[:20],
+        "llm_analysis": llm_analysis,
+        "llm_error": llm_error,
     }
