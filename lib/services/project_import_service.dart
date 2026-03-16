@@ -38,9 +38,9 @@ class ProjectImportResult {
 }
 
 class ProjectImportService {
-  final _db = FirebaseFirestore.instance;
-  final _auth = FirebaseAuth.instance;
-  final _storage = FirebaseStorage.instance;
+  final FirebaseFirestore _db = FirebaseFirestore.instance;
+  final FirebaseAuth _auth = FirebaseAuth.instance;
+  final FirebaseStorage _storage = FirebaseStorage.instance;
 
   final AnalysisService _analysisService;
   final FileFilterService _filter;
@@ -76,6 +76,50 @@ class ProjectImportService {
       return AnalysisResult.fromMap(Map<String, dynamic>.from(raw));
     }
     return null;
+  }
+
+  /// GitHub analizine ait ham backend çıktısını okur.
+  /// Özellikle llm_analysis, llm_error ve file_summaries gibi alanlar için kullanılır.
+  Future<Map<String, dynamic>?> getProjectRawGithubAnalysis(
+      String projectId) async {
+    final snap = await _db.collection('projects').doc(projectId).get();
+    if (!snap.exists) return null;
+
+    final data = snap.data();
+    if (data == null) return null;
+
+    final raw = data['rawGithubAnalysis'];
+    if (raw is Map<String, dynamic>) {
+      return raw;
+    }
+    if (raw is Map) {
+      return Map<String, dynamic>.from(raw);
+    }
+    return null;
+  }
+
+  /// Sadece LLM analiz metnini döndürür.
+  Future<String?> getProjectLlmAnalysis(String projectId) async {
+    final raw = await getProjectRawGithubAnalysis(projectId);
+    if (raw == null) return null;
+
+    final llmAnalysis = raw['llm_analysis'];
+    if (llmAnalysis == null) return null;
+
+    return llmAnalysis.toString().trim().isEmpty
+        ? null
+        : llmAnalysis.toString();
+  }
+
+  /// LLM analiz hatası varsa döndürür.
+  Future<String?> getProjectLlmError(String projectId) async {
+    final raw = await getProjectRawGithubAnalysis(projectId);
+    if (raw == null) return null;
+
+    final llmError = raw['llm_error'];
+    if (llmError == null) return null;
+
+    return llmError.toString().trim().isEmpty ? null : llmError.toString();
   }
 
   /// Web uyumlu içe aktarma:
@@ -310,10 +354,6 @@ class ProjectImportService {
 
     return entries.first.key;
   }
-
-  // -------------------------------
-  // GitHub benzeri dil tespiti
-  // -------------------------------
 
   String? _extractTopFolderName(Archive archive) {
     final paths = archive.files
