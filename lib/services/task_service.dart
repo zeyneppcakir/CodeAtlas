@@ -19,14 +19,12 @@ class TaskService {
     return _db.collection('projects').doc(pid).collection('tasks');
   }
 
-  // ✅ activity log koleksiyonu
   CollectionReference<Map<String, dynamic>> _logsRef(String projectId) {
     final pid = projectId.trim();
     if (pid.isEmpty) throw Exception('ProjectId boş olamaz.');
     return _db.collection('projects').doc(pid).collection('activity_logs');
   }
 
-  // ✅ status doğrulama
   String _cleanStatus(String status) {
     final s = status.trim().toLowerCase();
     if (s != 'todo' && s != 'doing' && s != 'done') {
@@ -65,7 +63,15 @@ class TaskService {
     return a;
   }
 
-  // ✅ activity log yazıcı (log hatası uygulamayı kırmasın)
+  void _validateDates({
+    required DateTime startDate,
+    required DateTime dueDate,
+  }) {
+    if (startDate.isAfter(dueDate)) {
+      throw Exception('Başlangıç tarihi, bitiş tarihinden sonra olamaz.');
+    }
+  }
+
   Future<void> _log({
     required String projectId,
     required String action,
@@ -74,11 +80,11 @@ class TaskService {
     Map<String, dynamic>? meta,
   }) async {
     try {
-      final uid = _auth.currentUser?.uid; // log için daha güvenli
+      final uid = _auth.currentUser?.uid;
       if (uid == null) return;
 
       await _logsRef(projectId).add({
-        'action': action, // created/updated/deleted/status_changed/ai_generated
+        'action': action,
         if (taskId != null) 'taskId': taskId,
         if (taskTitle != null && taskTitle.trim().isNotEmpty)
           'taskTitle': taskTitle.trim(),
@@ -87,7 +93,7 @@ class TaskService {
         'createdAt': FieldValue.serverTimestamp(),
       });
     } catch (_) {
-      // sessiz geç
+      // Log hatası uygulamayı kırmasın.
     }
   }
 
@@ -99,12 +105,11 @@ class TaskService {
     required String title,
     String? description,
     required int priority,
+    required DateTime startDate,
     required DateTime dueDate,
     String status = 'todo',
     Map<String, dynamic>? ai,
     bool aiGenerated = false,
-
-    // ✅ yeni
     String? assigneeId,
     String? assigneeEmail,
   }) async {
@@ -116,6 +121,8 @@ class TaskService {
     final cleanedAssigneeId = _cleanAssigneeId(assigneeId);
     final cleanedAssigneeEmail = _cleanAssigneeEmail(assigneeEmail);
 
+    _validateDates(startDate: startDate, dueDate: dueDate);
+
     try {
       final uid = _uid;
 
@@ -124,15 +131,13 @@ class TaskService {
         'title': t,
         'description': d,
         'priority': pr,
+        'startDate': Timestamp.fromDate(startDate),
         'dueDate': Timestamp.fromDate(dueDate),
         'status': s,
         if (ai != null) 'ai': ai,
         'aiGenerated': aiGenerated,
-
-        // ✅ atanan üye
         if (cleanedAssigneeId != null) 'assigneeId': cleanedAssigneeId,
         if (cleanedAssigneeEmail != null) 'assigneeEmail': cleanedAssigneeEmail,
-
         'ownerId': uid,
         'createdAt': FieldValue.serverTimestamp(),
         'updatedAt': FieldValue.serverTimestamp(),
@@ -147,6 +152,8 @@ class TaskService {
           'status': s,
           'aiGenerated': aiGenerated,
           'priority': pr,
+          'startDate': startDate.toIso8601String(),
+          'dueDate': dueDate.toIso8601String(),
           if (cleanedAssigneeEmail != null)
             'assigneeEmail': cleanedAssigneeEmail,
         },
@@ -165,9 +172,8 @@ class TaskService {
     required String title,
     String? description,
     required int priority,
+    required DateTime startDate,
     required DateTime dueDate,
-
-    // ✅ yeni
     String? assigneeId,
     String? assigneeEmail,
   }) async {
@@ -181,17 +187,17 @@ class TaskService {
     final cleanedAssigneeId = _cleanAssigneeId(assigneeId);
     final cleanedAssigneeEmail = _cleanAssigneeEmail(assigneeEmail);
 
+    _validateDates(startDate: startDate, dueDate: dueDate);
+
     try {
       await _tasksRef(pid).doc(tid).update({
         'title': t,
         'description': d,
         'priority': pr,
+        'startDate': Timestamp.fromDate(startDate),
         'dueDate': Timestamp.fromDate(dueDate),
-
-        // ✅ atanan üye güncelle
         'assigneeId': cleanedAssigneeId,
         'assigneeEmail': cleanedAssigneeEmail,
-
         'updatedAt': FieldValue.serverTimestamp(),
       });
 
@@ -202,6 +208,8 @@ class TaskService {
         taskTitle: t,
         meta: {
           'priority': pr,
+          'startDate': startDate.toIso8601String(),
+          'dueDate': dueDate.toIso8601String(),
           if (cleanedAssigneeEmail != null)
             'assigneeEmail': cleanedAssigneeEmail,
         },
@@ -220,11 +228,10 @@ class TaskService {
     String? title,
     String? description,
     int? priority,
+    DateTime? startDate,
     DateTime? dueDate,
     String? status,
     Map<String, dynamic>? ai,
-
-    // ✅ yeni
     String? assigneeId,
     String? assigneeEmail,
     bool updateAssignee = false,
@@ -232,6 +239,10 @@ class TaskService {
     final pid = projectId.trim();
     final tid = taskId.trim();
     if (tid.isEmpty) throw Exception('TaskId boş olamaz.');
+
+    if (startDate != null && dueDate != null) {
+      _validateDates(startDate: startDate, dueDate: dueDate);
+    }
 
     final data = <String, dynamic>{
       'updatedAt': FieldValue.serverTimestamp(),
@@ -244,17 +255,17 @@ class TaskService {
     }
 
     if (priority != null) data['priority'] = _cleanPriority(priority);
+    if (startDate != null) data['startDate'] = Timestamp.fromDate(startDate);
     if (dueDate != null) data['dueDate'] = Timestamp.fromDate(dueDate);
     if (status != null) data['status'] = _cleanStatus(status);
     if (ai != null) data['ai'] = ai;
 
-    // ✅ assignee partial update
     if (updateAssignee) {
       data['assigneeId'] = _cleanAssigneeId(assigneeId);
       data['assigneeEmail'] = _cleanAssigneeEmail(assigneeEmail);
     }
 
-    if (data.length == 1) return; // sadece updatedAt -> boş update yok
+    if (data.length == 1) return;
 
     try {
       await _tasksRef(pid).doc(tid).update(data);
@@ -265,8 +276,10 @@ class TaskService {
         taskId: tid,
         taskTitle: title,
         meta: {
-          if (status != null) 'status': status,
+          if (status != null) 'status': _cleanStatus(status),
           if (priority != null) 'priority': _cleanPriority(priority),
+          if (startDate != null) 'startDate': startDate.toIso8601String(),
+          if (dueDate != null) 'dueDate': dueDate.toIso8601String(),
           if (ai != null) 'aiUpdated': true,
           if (updateAssignee)
             'assigneeEmail': _cleanAssigneeEmail(assigneeEmail),
@@ -277,7 +290,6 @@ class TaskService {
     }
   }
 
-  // ✅ status değiştir
   Future<void> setStatus({
     required String projectId,
     required String taskId,
@@ -308,7 +320,6 @@ class TaskService {
     }
   }
 
-  // ✅ LLM üretti: ai + aiGenerated
   Future<void> markAiGenerated({
     required String projectId,
     required String taskId,
@@ -375,7 +386,9 @@ class TaskService {
   }) {
     final pid = projectId.trim();
 
-    final safeOrder = (orderByField == 'dueDate' || orderByField == 'priority')
+    final safeOrder = (orderByField == 'dueDate' ||
+            orderByField == 'priority' ||
+            orderByField == 'startDate')
         ? orderByField
         : 'dueDate';
 
@@ -402,7 +415,9 @@ class TaskService {
   }) async {
     final pid = projectId.trim();
 
-    final safeOrder = (orderByField == 'dueDate' || orderByField == 'priority')
+    final safeOrder = (orderByField == 'dueDate' ||
+            orderByField == 'priority' ||
+            orderByField == 'startDate')
         ? orderByField
         : 'dueDate';
 
@@ -424,7 +439,6 @@ class TaskService {
     }
   }
 
-  // ✅ activity logs stream
   Stream<QuerySnapshot<Map<String, dynamic>>> logsStream({
     required String projectId,
     int limit = 50,

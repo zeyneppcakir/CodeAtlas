@@ -1,10 +1,11 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 
-import '../theme/app_theme.dart';
-import '../services/task_service.dart';
 import '../services/ai_service.dart';
 import '../services/project_service.dart';
+import '../services/task_service.dart';
+import '../theme/app_theme.dart';
+import '../theme/priority_style.dart';
 
 class AddTaskScreen extends StatefulWidget {
   final String projectId;
@@ -13,9 +14,9 @@ class AddTaskScreen extends StatefulWidget {
   final String? initialTitle;
   final String? initialDescription;
   final int? initialPriority;
+  final DateTime? initialStartDate;
   final DateTime? initialDueDate;
 
-  // ✅ yeni
   final String? initialAssigneeId;
   final String? initialAssigneeEmail;
 
@@ -26,6 +27,7 @@ class AddTaskScreen extends StatefulWidget {
     this.initialTitle,
     this.initialDescription,
     this.initialPriority,
+    this.initialStartDate,
     this.initialDueDate,
     this.initialAssigneeId,
     this.initialAssigneeEmail,
@@ -36,20 +38,20 @@ class AddTaskScreen extends StatefulWidget {
 }
 
 class _AddTaskScreenState extends State<AddTaskScreen> {
-  final _titleCtrl = TextEditingController();
-  final _descCtrl = TextEditingController();
+  final TextEditingController _titleCtrl = TextEditingController();
+  final TextEditingController _descCtrl = TextEditingController();
 
   int _priority = 2;
+  DateTime? _startDate;
   DateTime? _dueDate;
 
   bool _loading = false;
   bool _aiLoading = false;
 
-  final _service = TaskService();
-  final _ai = AIService();
-  final _projectService = ProjectService();
+  final TaskService _service = TaskService();
+  final AIService _ai = AIService();
+  final ProjectService _projectService = ProjectService();
 
-  // ✅ seçilen üye
   String? _assigneeId;
   String? _assigneeEmail;
 
@@ -63,22 +65,59 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
       _titleCtrl.text = widget.initialTitle ?? '';
       _descCtrl.text = widget.initialDescription ?? '';
       _priority = widget.initialPriority ?? 2;
+      _startDate = widget.initialStartDate;
       _dueDate = widget.initialDueDate;
-
       _assigneeId = widget.initialAssigneeId;
       _assigneeEmail = widget.initialAssigneeEmail;
     }
   }
 
-  Future<void> _pickDate() async {
+  String _formatDate(DateTime? date) {
+    if (date == null) return 'Tarih seç';
+
+    final day = date.day.toString().padLeft(2, '0');
+    final month = date.month.toString().padLeft(2, '0');
+    final year = date.year.toString();
+
+    return '$day.$month.$year';
+  }
+
+  Future<void> _pickStartDate() async {
     final now = DateTime.now();
     final picked = await showDatePicker(
       context: context,
       firstDate: DateTime(now.year - 1),
       lastDate: DateTime(now.year + 5),
-      initialDate: _dueDate ?? now,
+      initialDate: _startDate ?? now,
     );
-    if (picked != null) setState(() => _dueDate = picked);
+
+    if (picked != null) {
+      setState(() {
+        _startDate = picked;
+
+        if (_dueDate != null && _dueDate!.isBefore(picked)) {
+          _dueDate = picked;
+        }
+      });
+    }
+  }
+
+  Future<void> _pickDueDate() async {
+    final now = DateTime.now();
+    final initial = _dueDate ?? _startDate ?? now;
+
+    final picked = await showDatePicker(
+      context: context,
+      firstDate: DateTime(now.year - 1),
+      lastDate: DateTime(now.year + 5),
+      initialDate: initial,
+    );
+
+    if (picked != null) {
+      setState(() {
+        _dueDate = picked;
+      });
+    }
   }
 
   Future<void> _save() async {
@@ -86,14 +125,30 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
 
     if (title.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Task başlığı boş olamaz')),
+        const SnackBar(content: Text('Görev başlığı boş olamaz.')),
+      );
+      return;
+    }
+
+    if (_startDate == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Lütfen bir başlangıç tarihi seç.')),
       );
       return;
     }
 
     if (_dueDate == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Lütfen bir bitiş tarihi seç')),
+        const SnackBar(content: Text('Lütfen bir bitiş tarihi seç.')),
+      );
+      return;
+    }
+
+    if (_startDate!.isAfter(_dueDate!)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Başlangıç tarihi, bitiş tarihinden sonra olamaz.'),
+        ),
       );
       return;
     }
@@ -110,6 +165,7 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
           title: title,
           description: desc,
           priority: _priority,
+          startDate: _startDate!,
           dueDate: _dueDate!,
           assigneeId: _assigneeId,
           assigneeEmail: _assigneeEmail,
@@ -120,6 +176,7 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
           title: title,
           description: desc,
           priority: _priority,
+          startDate: _startDate!,
           dueDate: _dueDate!,
           assigneeId: _assigneeId,
           assigneeEmail: _assigneeEmail,
@@ -137,8 +194,6 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
       if (mounted) setState(() => _loading = false);
     }
   }
-
-  // ---------------- AI kısmı (Öner -> Seç -> Ekle) ----------------
 
   String _cleanupTr(String s) {
     var x = s;
@@ -218,6 +273,15 @@ Proje:
 
   Future<void> _aiSuggestTasksAndAdd() async {
     if (_aiLoading || _loading) return;
+
+    if (_startDate == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('AI görevleri eklemeden önce başlangıç tarihi seç.'),
+        ),
+      );
+      return;
+    }
 
     setState(() => _aiLoading = true);
 
@@ -329,7 +393,8 @@ Proje:
                                     width: 16,
                                     height: 16,
                                     child: CircularProgressIndicator(
-                                        strokeWidth: 2),
+                                      strokeWidth: 2,
+                                    ),
                                   )
                                 : const Icon(Icons.refresh),
                             label: Text(
@@ -390,17 +455,18 @@ Proje:
         return;
       }
 
-      final now = DateTime.now();
+      final baseStart = _startDate!;
       int k = 0;
       final sorted = selected.toList()..sort();
 
       for (final i in sorted) {
-        final due = now.add(Duration(days: 7 * (k + 1)));
+        final due = baseStart.add(Duration(days: 7 * (k + 1)));
         await _service.addTask(
           projectId: widget.projectId,
           title: titles[i],
           description: null,
           priority: _priority,
+          startDate: baseStart,
           dueDate: due,
           status: 'todo',
           aiGenerated: true,
@@ -412,7 +478,7 @@ Proje:
 
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('${selected.length} task eklendi ✅')),
+        SnackBar(content: Text('${selected.length} görev eklendi ✅')),
       );
     } catch (e) {
       if (!mounted) return;
@@ -429,6 +495,105 @@ Proje:
     }
   }
 
+  Widget _buildPrioritySelector() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Öncelik',
+          style: TextStyle(
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        const SizedBox(height: 10),
+        Wrap(
+          spacing: 10,
+          runSpacing: 10,
+          children: [
+            _priorityChoiceChip(1),
+            _priorityChoiceChip(2),
+            _priorityChoiceChip(3),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _priorityChoiceChip(int value) {
+    final selected = _priority == value;
+
+    return InkWell(
+      onTap: () => setState(() => _priority = value),
+      borderRadius: BorderRadius.circular(16),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        decoration: BoxDecoration(
+          color: selected
+              ? PriorityStyle.backgroundColor(value)
+              : Colors.transparent,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: PriorityStyle.borderColor(value),
+            width: selected ? 1.5 : 1,
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (selected) ...[
+              Icon(
+                Icons.check_circle,
+                size: 16,
+                color: PriorityStyle.textColor(value),
+              ),
+              const SizedBox(width: 6),
+            ],
+            Text(
+              PriorityStyle.label(value),
+              style: TextStyle(
+                color: PriorityStyle.textColor(value),
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDateButton({
+    required String label,
+    required String text,
+    required VoidCallback onTap,
+    required IconData icon,
+  }) {
+    return Expanded(
+      child: SizedBox(
+        height: 52,
+        child: OutlinedButton.icon(
+          onPressed: onTap,
+          icon: Icon(icon),
+          label: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                label,
+                style: const TextStyle(fontSize: 11),
+              ),
+              Text(
+                text,
+                style: const TextStyle(
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   void dispose() {
     _titleCtrl.dispose();
@@ -438,14 +603,13 @@ Proje:
 
   @override
   Widget build(BuildContext context) {
-    final dueText = _dueDate == null
-        ? 'Tarih seç'
-        : '${_dueDate!.day}.${_dueDate!.month}.${_dueDate!.year}';
+    final startText = _formatDate(_startDate);
+    final dueText = _formatDate(_dueDate);
 
     return Scaffold(
       appBar: AppBar(
         backgroundColor: AppColors.navy,
-        title: Text(_isEdit ? 'Task Düzenle' : 'Yeni Task'),
+        title: Text(_isEdit ? 'Görevi Düzenle' : 'Yeni Görev'),
       ),
       body: Padding(
         padding: const EdgeInsets.all(16),
@@ -479,29 +643,23 @@ Proje:
               children: [
                 TextField(
                   controller: _titleCtrl,
-                  decoration: const InputDecoration(labelText: 'Başlık'),
+                  decoration: const InputDecoration(
+                    labelText: 'Başlık',
+                    hintText: 'Görev başlığını gir',
+                  ),
                 ),
                 const SizedBox(height: 12),
                 TextField(
                   controller: _descCtrl,
-                  decoration:
-                      const InputDecoration(labelText: 'Açıklama (opsiyonel)'),
+                  decoration: const InputDecoration(
+                    labelText: 'Açıklama (opsiyonel)',
+                    hintText: 'Görev hakkında kısa bilgi yaz',
+                  ),
                   maxLines: 3,
                 ),
-                const SizedBox(height: 12),
-                DropdownButtonFormField<int>(
-                  value: _priority,
-                  items: const [
-                    DropdownMenuItem(value: 1, child: Text('1 - Düşük')),
-                    DropdownMenuItem(value: 2, child: Text('2 - Orta')),
-                    DropdownMenuItem(value: 3, child: Text('3 - Yüksek')),
-                  ],
-                  onChanged: (v) => setState(() => _priority = v ?? 2),
-                  decoration: const InputDecoration(labelText: 'Öncelik'),
-                ),
-                const SizedBox(height: 12),
-
-                // ✅ Atanan üye
+                const SizedBox(height: 16),
+                _buildPrioritySelector(),
+                const SizedBox(height: 16),
                 DropdownButtonFormField<String?>(
                   value: _assigneeId,
                   items: memberItems,
@@ -532,18 +690,25 @@ Proje:
                     labelText: 'Atanan üye',
                   ),
                 ),
-
-                const SizedBox(height: 12),
-                SizedBox(
-                  width: double.infinity,
-                  child: OutlinedButton.icon(
-                    onPressed: _pickDate,
-                    icon: const Icon(Icons.date_range),
-                    label: Text(dueText),
-                  ),
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    _buildDateButton(
+                      label: 'Başlangıç',
+                      text: startText,
+                      onTap: _pickStartDate,
+                      icon: Icons.play_arrow_outlined,
+                    ),
+                    const SizedBox(width: 12),
+                    _buildDateButton(
+                      label: 'Bitiş',
+                      text: dueText,
+                      onTap: _pickDueDate,
+                      icon: Icons.event_available_outlined,
+                    ),
+                  ],
                 ),
                 const SizedBox(height: 16),
-
                 SizedBox(
                   width: double.infinity,
                   height: 46,
@@ -559,10 +724,10 @@ Proje:
                           )
                         : const Icon(Icons.smart_toy),
                     label: Text(
-                        _aiLoading ? 'AI düşünüyor...' : 'AI’dan Task Öner'),
+                      _aiLoading ? 'AI düşünüyor...' : 'AI’dan Görev Öner',
+                    ),
                   ),
                 ),
-
                 const SizedBox(height: 12),
                 SizedBox(
                   width: double.infinity,
