@@ -147,11 +147,9 @@ class ProjectService {
   }
 
   // ---------------------------------------------------------------------------
-  // ÜYE EKLEME / ÜYE LİSTELEME
+  // KULLANICI ARAMA
   // ---------------------------------------------------------------------------
 
-  /// users koleksiyonunda email'e göre kullanıcı bulur
-  /// dönüş: {'uid': ..., 'email': ..., 'displayName': ...}
   Future<Map<String, dynamic>?> findUserByEmail(String email) async {
     final normalized = _cleanEmail(email);
     if (normalized.isEmpty) return null;
@@ -181,7 +179,12 @@ class ProjectService {
     return user?['uid'] as String?;
   }
 
-  /// projects/{projectId}/members/{uid} şeklinde kaydeder
+  // ---------------------------------------------------------------------------
+  // ÜYE EKLEME / DAVET AKIŞI
+  // ---------------------------------------------------------------------------
+
+  /// Proje içine üyeyi direkt aktif eklemek yerine önce pending davet oluşturur.
+  /// Kullanıcı onaylayınca status => active olur.
   Future<void> addMemberByEmail({
     required String projectId,
     required String email,
@@ -193,7 +196,7 @@ class ProjectService {
 
     final targetEmail = _cleanEmail(email);
     if (targetEmail.isEmpty) {
-      throw Exception('Email boş olamaz.');
+      throw Exception('E-posta boş olamaz.');
     }
 
     final projectRef = _db.collection('projects').doc(projectId);
@@ -203,7 +206,11 @@ class ProjectService {
       throw Exception('Proje bulunamadı.');
     }
 
-    final ownerId = projectSnap.data()?['ownerId'] as String?;
+    final projectData = projectSnap.data();
+    final ownerId = projectData?['ownerId'] as String?;
+    final projectName =
+        (projectData?['name'] ?? 'Adsız Proje').toString().trim();
+
     if (ownerId == null || ownerId != myUid) {
       throw Exception('Üye eklemek için proje sahibi olmalısın.');
     }
@@ -211,7 +218,7 @@ class ProjectService {
     final user = await findUserByEmail(targetEmail);
     if (user == null) {
       throw Exception(
-          'Bu email ile kayıtlı kullanıcı bulunamadı: $targetEmail');
+          'Bu e-posta ile kayıtlı kullanıcı bulunamadı: $targetEmail');
     }
 
     final targetUid = (user['uid'] ?? '').toString().trim();
@@ -230,30 +237,205 @@ class ProjectService {
     final memberSnap = await memberRef.get();
 
     if (memberSnap.exists) {
+      final existingStatus =
+          (memberSnap.data()?['status'] ?? 'active').toString().trim();
+
+      if (existingStatus == 'pending') {
+        throw Exception('Bu kullanıcı için zaten bekleyen bir davet var.');
+      }
+
       throw Exception('Bu kullanıcı zaten üye.');
     }
 
+    final inviteRef = _db.collection('member_invites').doc();
+    final inviteId = inviteRef.id;
+
     // ignore: avoid_print
     print(
-      'ProjectService::addMemberByEmail -> projectId=$projectId targetUid=$targetUid email=$foundEmail',
+      'ProjectService::addMemberByEmail -> projectId=$projectId targetUid=$targetUid email=$foundEmail inviteId=$inviteId',
     );
 
-    await memberRef.set({
+    final batch = _db.batch();
+
+    batch.set(memberRef, {
       'uid': targetUid,
       'email': foundEmail,
       'displayName': displayName,
       'role': 'member',
+      'status': 'pending',
+      'projectId': projectId,
+      'projectName': projectName,
+      'inviteId': inviteId,
       'addedAt': FieldValue.serverTimestamp(),
       'addedBy': myUid,
     });
+
+    batch.set(inviteRef, {
+      'inviteId': inviteId,
+      'projectId': projectId,
+      'projectName': projectName,
+      'targetUid': targetUid,
+      'targetEmail': foundEmail,
+      'targetDisplayName': displayName,
+      'role': 'member',
+      'status': 'pending',
+      'createdBy': myUid,
+      'createdAt': FieldValue.serverTimestamp(),
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+
+    await batch.commit();
   }
 
+  /// Sadece aktif/onaylı üyeleri döndürür.
   Stream<QuerySnapshot<Map<String, dynamic>>> membersStream(String projectId) {
     return _db
         .collection('projects')
         .doc(projectId)
         .collection('members')
+        .where('status', whereIn: ['active', 'approved'])
         .orderBy('addedAt', descending: true)
         .snapshots();
+  }
+
+  /// Bekleyen üyeleri ayrıca görmek istersen kullanılabilir.
+  Stream<QuerySnapshot<Map<String, dynamic>>> pendingMembersStream(
+    String projectId,
+  ) {
+    return _db
+        .collection('projects')
+        .doc(projectId)
+        .collection('members')
+        .where('status', isEqualTo: 'pending')
+        .orderBy('addedAt', descending: true)
+        .snapshots();
+  }
+
+  /// Giriş yapan kullanıcının bekleyen proje davetleri.
+  Stream<QuerySnapshot<Map<String, dynamic>>> myPendingInvitesStream() {
+    final uid = _uid;
+    if (uid == null) return const Stream.empty();
+
+    return _db
+        .collection('member_invites')
+        .where('targetUid', isEqualTo: uid)
+        .where('status', isEqualTo: 'pending')
+        .orderBy('createdAt', descending: true)
+        .snapshots();
+  }
+
+  /// Kullanıcı daveti kabul ederse hem invite hem member kaydı aktifleşir.
+  Future<void> acceptInvite({
+    required String inviteId,
+  }) async {
+    final uid = _uid;
+    if (uid == null) {
+      throw Exception('Oturum bulunamadı.');
+    }
+
+    final inviteRef = _db.collection('member_invites').doc(inviteId);
+    final inviteSnap = await inviteRef.get();
+
+    if (!inviteSnap.exists) {
+      throw Exception('Davet bulunamadı.');
+    }
+
+    final data = inviteSnap.data();
+    if (data == null) {
+      throw Exception('Davet verisi alınamadı.');
+    }
+
+    final targetUid = (data['targetUid'] ?? '').toString().trim();
+    final status = (data['status'] ?? 'pending').toString().trim();
+    final projectId = (data['projectId'] ?? '').toString().trim();
+
+    if (targetUid != uid) {
+      throw Exception('Bu daveti kabul etme yetkin yok.');
+    }
+
+    if (status != 'pending') {
+      throw Exception('Bu davet artık beklemede değil.');
+    }
+
+    if (projectId.isEmpty) {
+      throw Exception('Davet proje bilgisi eksik.');
+    }
+
+    final memberRef = _db
+        .collection('projects')
+        .doc(projectId)
+        .collection('members')
+        .doc(uid);
+
+    final batch = _db.batch();
+
+    batch.update(inviteRef, {
+      'status': 'approved',
+      'updatedAt': FieldValue.serverTimestamp(),
+      'approvedAt': FieldValue.serverTimestamp(),
+    });
+
+    batch.update(memberRef, {
+      'status': 'active',
+      'approvedAt': FieldValue.serverTimestamp(),
+    });
+
+    await batch.commit();
+  }
+
+  /// Kullanıcı daveti reddederse invite reddedilir ve member kaydı kaldırılır.
+  Future<void> rejectInvite({
+    required String inviteId,
+  }) async {
+    final uid = _uid;
+    if (uid == null) {
+      throw Exception('Oturum bulunamadı.');
+    }
+
+    final inviteRef = _db.collection('member_invites').doc(inviteId);
+    final inviteSnap = await inviteRef.get();
+
+    if (!inviteSnap.exists) {
+      throw Exception('Davet bulunamadı.');
+    }
+
+    final data = inviteSnap.data();
+    if (data == null) {
+      throw Exception('Davet verisi alınamadı.');
+    }
+
+    final targetUid = (data['targetUid'] ?? '').toString().trim();
+    final status = (data['status'] ?? 'pending').toString().trim();
+    final projectId = (data['projectId'] ?? '').toString().trim();
+
+    if (targetUid != uid) {
+      throw Exception('Bu daveti reddetme yetkin yok.');
+    }
+
+    if (status != 'pending') {
+      throw Exception('Bu davet artık beklemede değil.');
+    }
+
+    if (projectId.isEmpty) {
+      throw Exception('Davet proje bilgisi eksik.');
+    }
+
+    final memberRef = _db
+        .collection('projects')
+        .doc(projectId)
+        .collection('members')
+        .doc(uid);
+
+    final batch = _db.batch();
+
+    batch.update(inviteRef, {
+      'status': 'rejected',
+      'updatedAt': FieldValue.serverTimestamp(),
+      'rejectedAt': FieldValue.serverTimestamp(),
+    });
+
+    batch.delete(memberRef);
+
+    await batch.commit();
   }
 }
