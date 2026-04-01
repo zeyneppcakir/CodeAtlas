@@ -14,7 +14,6 @@ class LanguageStat {
     required this.lines,
   });
 
-  /// Map'e çevirme (Firestore / backend için)
   Map<String, dynamic> toMap() => {
         'language': language,
         'files': files,
@@ -22,7 +21,6 @@ class LanguageStat {
         'lines': lines,
       };
 
-  /// Güvenli int parse fonksiyonu
   static int _toInt(dynamic value) {
     if (value == null) return 0;
     if (value is int) return value;
@@ -31,13 +29,26 @@ class LanguageStat {
     return 0;
   }
 
-  /// Map -> Model dönüşümü
   factory LanguageStat.fromMap(Map<String, dynamic> map) {
     return LanguageStat(
       language: (map['language'] ?? '').toString(),
       files: _toInt(map['files']),
       bytes: _toInt(map['bytes']),
       lines: _toInt(map['lines']),
+    );
+  }
+
+  LanguageStat copyWith({
+    String? language,
+    int? files,
+    int? bytes,
+    int? lines,
+  }) {
+    return LanguageStat(
+      language: language ?? this.language,
+      files: files ?? this.files,
+      bytes: bytes ?? this.bytes,
+      lines: lines ?? this.lines,
     );
   }
 }
@@ -75,7 +86,6 @@ class AnalysisResult {
     required this.languages,
   });
 
-  /// Model -> Map (Firestore veya backend kayıt için)
   Map<String, dynamic> toMap() => {
         'totalFiles': totalFiles,
         'ignoredFiles': ignoredFiles,
@@ -87,7 +97,6 @@ class AnalysisResult {
         'languages': languages.map((e) => e.toMap()).toList(),
       };
 
-  /// Güvenli int parse
   static int _toInt(dynamic value) {
     if (value == null) return 0;
     if (value is int) return value;
@@ -96,10 +105,8 @@ class AnalysisResult {
     return 0;
   }
 
-  /// Map -> Model dönüşümü
   factory AnalysisResult.fromMap(Map<String, dynamic> map) {
     final rawLanguages = map['languages'];
-
     final languages = <LanguageStat>[];
 
     if (rawLanguages is List) {
@@ -122,7 +129,31 @@ class AnalysisResult {
       codeLines: _toInt(map['codeLines']),
       commentLines: _toInt(map['commentLines']),
       todoCount: _toInt(map['todoCount']),
-      languages: languages,
+      languages: List.unmodifiable(languages),
     );
   }
+
+  AnalysisResult copyWith({
+    int? totalFiles,
+    int? ignoredFiles,
+    int? totalBytes,
+    int? totalLines,
+    int? codeLines,
+    int? commentLines,
+    int? todoCount,
+    List<LanguageStat>? languages,
+  }) {
+    return AnalysisResult(
+      totalFiles: totalFiles ?? this.totalFiles,
+      ignoredFiles: ignoredFiles ?? this.ignoredFiles,
+      totalBytes: totalBytes ?? this.totalBytes,
+      totalLines: totalLines ?? this.totalLines,
+      codeLines: codeLines ?? this.codeLines,
+      commentLines: commentLines ?? this.commentLines,
+      todoCount: todoCount ?? this.todoCount,
+      languages: languages ?? this.languages,
+    );
+  }
+
+  bool get hasLanguages => languages.isNotEmpty;
 }
