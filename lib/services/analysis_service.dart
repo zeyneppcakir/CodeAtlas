@@ -1,5 +1,8 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
+import 'package:http/http.dart' as http;
+
 import '../models/analysis_result.dart';
 import 'file_filter_service.dart';
 
@@ -33,6 +36,16 @@ class AnalysisService {
     '.sql': 'SQL',
   };
 
+  String get _backendBaseUrl {
+    if (kIsWeb) return 'http://127.0.0.1:8000';
+
+    if (defaultTargetPlatform == TargetPlatform.android) {
+      return 'http://10.0.2.2:8000';
+    }
+
+    return 'http://127.0.0.1:8000';
+  }
+
   String detectLanguage(String path) {
     final lower = path.toLowerCase();
 
@@ -45,6 +58,52 @@ class AnalysisService {
     return 'Diğer';
   }
 
+  Future<Map<String, dynamic>> getClocAnalysis() async {
+    final response = await http.get(
+      Uri.parse('$_backendBaseUrl/cloc/analyze'),
+    );
+
+    if (response.statusCode != 200) {
+      throw Exception('CLOC verisi alınamadı: ${response.body}');
+    }
+
+    final data = jsonDecode(response.body);
+
+    if (data is! Map<String, dynamic>) {
+      throw Exception('Beklenmeyen CLOC cevabı alındı.');
+    }
+
+    return data;
+  }
+
+  List<MapEntry<String, int>> extractTopLanguagesFromCloc(
+    Map<String, dynamic> clocResponse, {
+    int limit = 6,
+  }) {
+    final rawData = clocResponse['data'];
+
+    if (rawData is! Map<String, dynamic>) {
+      return [];
+    }
+
+    final result = <MapEntry<String, int>>[];
+
+    rawData.forEach((key, value) {
+      if (key == 'header' || key == 'SUM') return;
+
+      if (value is Map<String, dynamic>) {
+        final code = value['code'];
+        if (code is num && code > 0) {
+          result.add(MapEntry(key, code.toInt()));
+        }
+      }
+    });
+
+    result.sort((a, b) => b.value.compareTo(a.value));
+
+    return result.take(limit).toList();
+  }
+
   AnalysisResult analyzeFiles(Map<String, List<int>> filesByPath) {
     int totalFiles = 0;
     int ignoredFiles = 0;
@@ -54,7 +113,6 @@ class AnalysisService {
     int commentLines = 0;
     int todoCount = 0;
 
-    // Dil bazlı toplu istatistik
     final Map<String, ({int files, int bytes, int lines})> languageAggregates =
         {};
 
@@ -70,7 +128,6 @@ class AnalysisService {
       totalFiles++;
       totalBytes += bytes.length;
 
-      // Binary dosyalarda satır bazlı analiz yapılmaz
       if (filter.looksBinary(bytes)) {
         const language = 'Binary';
         final previous = languageAggregates[language];
