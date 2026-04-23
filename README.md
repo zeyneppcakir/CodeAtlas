@@ -1,16 +1,24 @@
-# codeatlas
+# CodeAtlas (Tez Projesi)
 
-A new Flutter project.
+Bu proje bilgisayar mühendisliği bitirme projesi olarak geliştirilmektedir.
 
-## Getting Started
+## Proje Durumu
+Aktif olarak geliştirilmektedir.
 
-This project is a starting point for a Flutter application.
+## Açıklama
+CodeAtlas, yazılım projelerini analiz eden ve yapay zeka (LLM) destekli yorumlar sunan bir platformdur.
 
-A few resources to get you started if this is your first Flutter project:
+Kullanıcılar:
+- ZIP dosyası veya GitHub repo yükleyebilir
+- Proje hakkında analiz sonuçlarını görebilir
+- Kod kalitesi ve geliştirme önerileri alabilir
 
-- [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
+## Kullanılan Teknolojiler
+- Flutter Web
+- FastAPI
+- Firebase (Auth, Firestore, Storage)
+- Gemini API
+- Ollama (Local LLM)
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+## Amaç
+Yazılım projelerini otomatik analiz ederek geliştiricilere rehberlik etmek.
