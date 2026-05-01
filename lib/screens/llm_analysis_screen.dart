@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../services/ai_service.dart';
 import '../services/project_import_service.dart';
 import '../theme/app_theme.dart';
+import '../widgets/codeatlas_appbar.dart';
 
 class LlmAnalysisScreen extends StatefulWidget {
   final String projectId;
@@ -654,14 +655,11 @@ Cevabı sade, düzenli ve okunabilir şekilde ver.
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        backgroundColor: AppColors.navy,
-        title: Text('LLM Analizi • ${widget.projectName}'),
+      appBar: CodeAtlasAppBar(
         actions: [
           IconButton(
-            tooltip: 'Yenile',
-            onPressed: _retry,
-            icon: const Icon(Icons.refresh),
+            onPressed: () => Navigator.pop(context),
+            icon: const Icon(Icons.arrow_back),
           ),
         ],
       ),

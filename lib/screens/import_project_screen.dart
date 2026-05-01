@@ -8,6 +8,7 @@ import 'package:http/http.dart' as http;
 import '../services/project_import_service.dart';
 import '../theme/app_theme.dart';
 import 'projects_screen.dart';
+import '../widgets/codeatlas_appbar.dart';
 
 class ImportProjectScreen extends StatefulWidget {
   const ImportProjectScreen({super.key});
@@ -351,9 +352,13 @@ class _ImportProjectScreenState extends State<ImportProjectScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        backgroundColor: AppColors.navy,
-        title: const Text('Proje İçe Aktarma'),
+      appBar: CodeAtlasAppBar(
+        actions: [
+          IconButton(
+            onPressed: () => Navigator.pop(context),
+            icon: const Icon(Icons.arrow_back),
+          ),
+        ],
       ),
       body: Padding(
         padding: const EdgeInsets.all(16),

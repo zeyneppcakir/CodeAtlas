@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 
 import '../services/project_service.dart';
 import '../theme/app_theme.dart';
+import '../widgets/codeatlas_appbar.dart';
 import 'analysis_history_screen.dart';
 import 'import_project_screen.dart';
 import 'projects_screen.dart';
@@ -17,14 +18,14 @@ class HomeScreen extends StatelessWidget {
       builder: (ctx) => AlertDialog(
         backgroundColor: AppColors.navySoft,
         title: const Text(
-          'Çıkış yap?',
+          'Çıkış yapmak istiyor musun?',
           style: TextStyle(
             color: AppColors.text,
             fontWeight: FontWeight.w800,
           ),
         ),
         content: const Text(
-          'Oturumun kapatılacak ve tekrar giriş yapman gerekecek.',
+          'Oturumun kapatılacak ve yeniden giriş yapman gerekecek.',
           style: TextStyle(color: AppColors.textSoft),
         ),
         actions: [
@@ -37,7 +38,7 @@ class HomeScreen extends StatelessWidget {
           ),
           ElevatedButton(
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Çıkış'),
+            child: const Text('Çıkış Yap'),
           ),
         ],
       ),
@@ -53,7 +54,7 @@ class HomeScreen extends StatelessWidget {
 
     if (!context.mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Çıkış yapıldı')),
+      const SnackBar(content: Text('Çıkış yapıldı.')),
     );
   }
 
@@ -66,25 +67,11 @@ class HomeScreen extends StatelessWidget {
     final user = FirebaseAuth.instance.currentUser;
 
     return Scaffold(
-      appBar: AppBar(
-        backgroundColor: AppColors.navy,
-        title: Row(
-          children: [
-            const _AnimatedLogo(),
-            const SizedBox(width: 12),
-            const Expanded(
-              child: Text(
-                'Ana Sayfa',
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-          ],
-        ),
+      appBar: CodeAtlasAppBar(
         actions: [
           IconButton(
-            onPressed: () => _logout(context),
-            icon: const Icon(Icons.logout),
-            tooltip: 'Çıkış',
+            onPressed: () => Navigator.pop(context),
+            icon: const Icon(Icons.arrow_back),
           ),
         ],
       ),
@@ -92,16 +79,18 @@ class HomeScreen extends StatelessWidget {
         padding: const EdgeInsets.all(16),
         child: Column(
           children: [
-            Card(
-              child: ListTile(
-                leading: const CircleAvatar(
-                  backgroundColor: AppColors.teal,
-                  child: Icon(Icons.person, color: Colors.black),
-                ),
-                title: Text(user?.displayName ?? 'Kullanıcı'),
-                subtitle: Text(user?.email ?? ''),
-              ),
+            const _PageSectionHeader(
+              title: 'Ana Sayfa',
+              subtitle:
+                  'Projelerini yönet, analizleri görüntüle ve içe aktarma işlemlerini başlat.',
             ),
+            const SizedBox(height: 14),
+            _WelcomeCard(
+              userName: user?.displayName,
+              userEmail: user?.email,
+            ),
+            const SizedBox(height: 14),
+            const _AIFeatureCard(),
             const SizedBox(height: 14),
             const _InviteSection(),
             const SizedBox(height: 14),
@@ -110,30 +99,308 @@ class HomeScreen extends StatelessWidget {
                 crossAxisCount: 2,
                 mainAxisSpacing: 12,
                 crossAxisSpacing: 12,
+                childAspectRatio: 1.08,
                 children: [
                   _HomeCard(
-                    title: 'Proje Yükle',
-                    subtitle: 'ZIP seç veya GitHub ile proje oluştur',
-                    icon: Icons.upload_file,
+                    title: 'Proje İçe Aktar',
+                    subtitle:
+                        'ZIP yükle veya GitHub bağlantısıyla yeni proje ekle',
+                    icon: Icons.upload_file_outlined,
                     onTap: () => _goTo(context, const ImportProjectScreen()),
                   ),
                   _HomeCard(
                     title: 'Projelerim',
-                    subtitle: 'Projeleri görüntüle ve yönet',
-                    icon: Icons.folder_open,
+                    subtitle: 'Projelerini görüntüle, aç ve yönet',
+                    icon: Icons.folder_open_outlined,
                     onTap: () => _goTo(context, const ProjectsScreen()),
                   ),
                   _HomeCard(
                     title: 'Kod Analizi',
-                    subtitle: 'Önce proje seç, sonra analiz yöntemi belirle',
-                    icon: Icons.manage_search,
+                    subtitle:
+                        'Bir proje seçerek statik analiz ve yapay zekâ yorumunu görüntüle',
+                    icon: Icons.manage_search_outlined,
                     onTap: () => _goTo(context, const ProjectsScreen()),
                   ),
                   _HomeCard(
                     title: 'Analiz Geçmişi',
-                    subtitle: 'Daha önce kaydedilen analiz sonuçları',
+                    subtitle:
+                        'Daha önce oluşturduğun analiz kayıtlarını incele',
                     icon: Icons.history,
                     onTap: () => _goTo(context, const AnalysisHistoryScreen()),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class AnimatedBrandText extends StatefulWidget {
+  const AnimatedBrandText({super.key});
+
+  @override
+  State<AnimatedBrandText> createState() => _AnimatedBrandTextState();
+}
+
+class _AnimatedBrandTextState extends State<AnimatedBrandText>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+  late final Animation<double> _opacityAnimation;
+  late final Animation<double> _glowAnimation;
+
+  @override
+  void initState() {
+    super.initState();
+
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1400),
+    )..repeat(reverse: true);
+
+    _opacityAnimation = Tween<double>(begin: 0.55, end: 1.0).animate(
+      CurvedAnimation(
+        parent: _controller,
+        curve: Curves.easeInOut,
+      ),
+    );
+
+    _glowAnimation = Tween<double>(begin: 4, end: 18).animate(
+      CurvedAnimation(
+        parent: _controller,
+        curve: Curves.easeInOut,
+      ),
+    );
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, child) {
+        return Opacity(
+          opacity: _opacityAnimation.value,
+          child: Text(
+            'CodeAtlas',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 30,
+              fontWeight: FontWeight.w900,
+              letterSpacing: 0.4,
+              color: AppColors.text,
+              shadows: [
+                Shadow(
+                  color: AppColors.teal.withOpacity(0.85),
+                  blurRadius: _glowAnimation.value,
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class AnimatedLogo extends StatefulWidget {
+  const AnimatedLogo({super.key});
+
+  @override
+  State<AnimatedLogo> createState() => _AnimatedLogoState();
+}
+
+class _AnimatedLogoState extends State<AnimatedLogo>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+  late final Animation<double> _scaleAnimation;
+
+  @override
+  void initState() {
+    super.initState();
+
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1600),
+    )..repeat(reverse: true);
+
+    _scaleAnimation = Tween<double>(begin: 0.95, end: 1.08).animate(
+      CurvedAnimation(
+        parent: _controller,
+        curve: Curves.easeInOut,
+      ),
+    );
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ScaleTransition(
+      scale: _scaleAnimation,
+      child: SizedBox(
+        width: 82,
+        height: 82,
+        child: ClipOval(
+          child: Image.asset(
+            'assets/icon/icon_foreground.png',
+            fit: BoxFit.contain,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _PageSectionHeader extends StatelessWidget {
+  final String title;
+  final String subtitle;
+
+  const _PageSectionHeader({
+    required this.title,
+    required this.subtitle,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: const TextStyle(
+              fontSize: 24,
+              fontWeight: FontWeight.w900,
+              color: AppColors.text,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            subtitle,
+            style: const TextStyle(
+              color: AppColors.textSoft,
+              height: 1.4,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _WelcomeCard extends StatelessWidget {
+  final String? userName;
+  final String? userEmail;
+
+  const _WelcomeCard({
+    required this.userName,
+    required this.userEmail,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: ListTile(
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 16,
+          vertical: 8,
+        ),
+        leading: const CircleAvatar(
+          radius: 24,
+          backgroundColor: AppColors.teal,
+          child: Icon(Icons.person, color: Colors.black),
+        ),
+        title: Text(
+          (userName != null && userName!.trim().isNotEmpty)
+              ? userName!.trim()
+              : 'Kullanıcı',
+          style: const TextStyle(
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+        subtitle: Text(
+          (userEmail != null && userEmail!.trim().isNotEmpty)
+              ? userEmail!.trim()
+              : 'E-posta bilgisi bulunamadı',
+        ),
+      ),
+    );
+  }
+}
+
+class _AIFeatureCard extends StatelessWidget {
+  const _AIFeatureCard();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            AppColors.teal.withOpacity(0.16),
+            AppColors.navySoft.withOpacity(0.95),
+          ],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: AppColors.teal.withOpacity(0.22),
+        ),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(18),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              width: 52,
+              height: 52,
+              decoration: BoxDecoration(
+                color: AppColors.teal.withOpacity(0.16),
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: const Icon(
+                Icons.auto_awesome,
+                color: AppColors.teal,
+                size: 28,
+              ),
+            ),
+            const SizedBox(width: 14),
+            const Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Yapay Zekâ Destekli Analiz',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  SizedBox(height: 8),
+                  Text(
+                    'Projelerini yalnızca statik olarak incelemekle kalma. Kod metriklerini farklı modellerle yorumla, geliştirme önerileri al ve özel istemlerle analiz üret.',
+                    style: TextStyle(
+                      color: AppColors.textSoft,
+                      height: 1.45,
+                    ),
                   ),
                 ],
               ),
@@ -428,7 +695,7 @@ class _HomeCard extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Icon(icon, size: 28, color: AppColors.teal),
-              const SizedBox(height: 10),
+              const SizedBox(height: 12),
               Text(
                 title,
                 style: const TextStyle(
@@ -436,62 +703,37 @@ class _HomeCard extends StatelessWidget {
                   fontWeight: FontWeight.w800,
                 ),
               ),
-              const SizedBox(height: 6),
-              Text(
-                subtitle,
-                style: const TextStyle(color: AppColors.textSoft),
+              const SizedBox(height: 8),
+              Expanded(
+                child: Text(
+                  subtitle,
+                  style: const TextStyle(
+                    color: AppColors.textSoft,
+                    height: 1.4,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 8),
+              const Row(
+                children: [
+                  Text(
+                    'Aç',
+                    style: TextStyle(
+                      color: AppColors.teal,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  SizedBox(width: 6),
+                  Icon(
+                    Icons.arrow_forward_rounded,
+                    size: 18,
+                    color: AppColors.teal,
+                  ),
+                ],
               ),
             ],
           ),
         ),
-      ),
-    );
-  }
-}
-
-class _AnimatedLogo extends StatefulWidget {
-  const _AnimatedLogo();
-
-  @override
-  State<_AnimatedLogo> createState() => _AnimatedLogoState();
-}
-
-class _AnimatedLogoState extends State<_AnimatedLogo>
-    with SingleTickerProviderStateMixin {
-  late AnimationController _controller;
-  late Animation<double> _scaleAnimation;
-
-  @override
-  void initState() {
-    super.initState();
-
-    _controller = AnimationController(
-      vsync: this,
-      duration: const Duration(seconds: 2),
-    )..repeat(reverse: true);
-
-    _scaleAnimation = Tween<double>(begin: 0.94, end: 1.10).animate(
-      CurvedAnimation(
-        parent: _controller,
-        curve: Curves.easeInOut,
-      ),
-    );
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return ScaleTransition(
-      scale: _scaleAnimation,
-      child: Image.asset(
-        'assets/icon/icon_app.png',
-        width: 36,
-        height: 36,
       ),
     );
   }

@@ -7,6 +7,7 @@ import 'package:codeatlas/screens/import_project_screen.dart';
 import 'package:codeatlas/screens/project_tasks_screen.dart';
 import 'package:codeatlas/services/project_service.dart';
 import 'package:codeatlas/theme/app_theme.dart';
+import '../widgets/codeatlas_appbar.dart';
 
 class ProjectsScreen extends StatefulWidget {
   const ProjectsScreen({super.key});
@@ -622,9 +623,13 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        backgroundColor: AppColors.navy,
-        title: const Text('Projelerim'),
+      appBar: CodeAtlasAppBar(
+        actions: [
+          IconButton(
+            onPressed: () => Navigator.pop(context),
+            icon: const Icon(Icons.arrow_back),
+          ),
+        ],
       ),
       floatingActionButton: FloatingActionButton(
         backgroundColor: AppColors.teal,

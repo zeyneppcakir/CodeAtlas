@@ -6,6 +6,7 @@ import '../services/project_service.dart';
 import '../services/task_service.dart';
 import '../theme/app_theme.dart';
 import '../theme/priority_style.dart';
+import '../widgets/codeatlas_appbar.dart';
 
 class AddTaskScreen extends StatefulWidget {
   final String projectId;
@@ -607,9 +608,13 @@ Proje:
     final dueText = _formatDate(_dueDate);
 
     return Scaffold(
-      appBar: AppBar(
-        backgroundColor: AppColors.navy,
-        title: Text(_isEdit ? 'Görevi Düzenle' : 'Yeni Görev'),
+      appBar: CodeAtlasAppBar(
+        actions: [
+          IconButton(
+            onPressed: () => Navigator.pop(context),
+            icon: const Icon(Icons.arrow_back),
+          ),
+        ],
       ),
       body: Padding(
         padding: const EdgeInsets.all(16),

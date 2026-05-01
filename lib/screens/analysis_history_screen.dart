@@ -3,6 +3,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import '../theme/app_theme.dart';
+import '../widgets/codeatlas_appbar.dart';
 
 class AnalysisHistoryScreen extends StatelessWidget {
   const AnalysisHistoryScreen({super.key});
@@ -21,9 +22,13 @@ class AnalysisHistoryScreen extends StatelessWidget {
         .orderBy('createdAt', descending: true);
 
     return Scaffold(
-      appBar: AppBar(
-        backgroundColor: AppColors.navy,
-        title: const Text('Analiz Geçmişi'),
+      appBar: CodeAtlasAppBar(
+        actions: [
+          IconButton(
+            onPressed: () => Navigator.pop(context),
+            icon: const Icon(Icons.arrow_back),
+          ),
+        ],
       ),
       body: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
         stream: q.snapshots(),

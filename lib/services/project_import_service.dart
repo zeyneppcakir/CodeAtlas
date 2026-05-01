@@ -60,6 +60,31 @@ class ProjectImportService {
     return user.uid;
   }
 
+  int _toInt(dynamic value) {
+    if (value == null) return 0;
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    if (value is String) return int.tryParse(value) ?? 0;
+    return 0;
+  }
+
+  int _firstAvailableInt(Map<String, dynamic> map, List<String> keys) {
+    for (final key in keys) {
+      if (map.containsKey(key)) {
+        final value = _toInt(map[key]);
+        if (value != 0) return value;
+      }
+    }
+
+    for (final key in keys) {
+      if (map.containsKey(key)) {
+        return _toInt(map[key]);
+      }
+    }
+
+    return 0;
+  }
+
   /// Statik analiz ekranı için projects/{projectId}.analysis alanını okur.
   Future<AnalysisResult?> getProjectAnalysis(String projectId) async {
     final snap = await _db.collection('projects').doc(projectId).get();
@@ -69,13 +94,38 @@ class ProjectImportService {
     if (data == null) return null;
 
     final raw = data['analysis'];
+    if (raw == null) return null;
+
+    Map<String, dynamic>? analysisMap;
     if (raw is Map<String, dynamic>) {
-      return AnalysisResult.fromMap(raw);
+      analysisMap = raw;
+    } else if (raw is Map) {
+      analysisMap = Map<String, dynamic>.from(raw);
     }
-    if (raw is Map) {
-      return AnalysisResult.fromMap(Map<String, dynamic>.from(raw));
+
+    if (analysisMap == null) return null;
+
+    var analysis = AnalysisResult.fromMap(analysisMap);
+
+    final topLevelTotalBytes =
+        _toInt(data['totalBytes'] ?? data['total_bytes']);
+    final topLevelIgnoredFiles =
+        _toInt(data['ignoredFiles'] ?? data['ignored_files']);
+    final topLevelFileCount = _toInt(data['fileCount'] ?? data['file_count']);
+
+    if (analysis.totalBytes == 0 && topLevelTotalBytes > 0) {
+      analysis = analysis.copyWith(totalBytes: topLevelTotalBytes);
     }
-    return null;
+
+    if (analysis.ignoredFiles == 0 && topLevelIgnoredFiles > 0) {
+      analysis = analysis.copyWith(ignoredFiles: topLevelIgnoredFiles);
+    }
+
+    if (analysis.totalFiles == 0 && topLevelFileCount > 0) {
+      analysis = analysis.copyWith(totalFiles: topLevelFileCount);
+    }
+
+    return analysis;
   }
 
   /// GitHub analizine ait ham backend çıktısını okur.
@@ -201,6 +251,7 @@ class ProjectImportService {
       'İÇE AKTAR DEBUG -> analiz bitti '
       'toplamDosya=${analysis.totalFiles} '
       'toplamSatir=${analysis.totalLines} '
+      'toplamByte=${analysis.totalBytes} '
       'dilSayisi=${analysis.languages.length}',
     );
 
@@ -227,7 +278,8 @@ class ProjectImportService {
       'analysis': analysis.toMap(),
       'fileCount': analysis.totalFiles,
       'ignoredFiles': analysis.ignoredFiles,
-      'totalBytes': bytes.length,
+      'totalBytes':
+          analysis.totalBytes > 0 ? analysis.totalBytes : bytes.length,
       'archiveName': originalFileName,
       'archiveUrl': archiveUrl,
       'createdAt': FieldValue.serverTimestamp(),
@@ -241,9 +293,12 @@ class ProjectImportService {
       primaryLanguage: primaryLang,
       languageStats: stats,
       fileCount: analysis.totalFiles,
-      totalBytes: bytes.length,
+      totalBytes: analysis.totalBytes > 0 ? analysis.totalBytes : bytes.length,
       archiveUrl: archiveUrl,
-      analysis: analysis,
+      analysis: analysis.copyWith(
+        totalBytes:
+            analysis.totalBytes > 0 ? analysis.totalBytes : bytes.length,
+      ),
     );
   }
 
@@ -313,13 +368,28 @@ class ProjectImportService {
     required Map<String, dynamic> analyzeData,
     required Map<String, int> languageDistribution,
   }) {
-    final totalCodeFilesFound =
-        (analyzeData['total_code_files_found'] as num?)?.toInt() ?? 0;
-    final totalLines = (analyzeData['total_lines'] as num?)?.toInt() ?? 0;
-    final nonEmptyLines =
-        (analyzeData['non_empty_lines'] as num?)?.toInt() ?? 0;
-    final todoCount = (analyzeData['todo_count'] as num?)?.toInt() ?? 0;
-    final fixmeCount = (analyzeData['fixme_count'] as num?)?.toInt() ?? 0;
+    final totalCodeFilesFound = _firstAvailableInt(
+        analyzeData, ['total_code_files_found', 'file_count']);
+    final totalLines = _firstAvailableInt(
+      analyzeData,
+      ['total_lines', 'line_count'],
+    );
+    final nonEmptyLines = _firstAvailableInt(
+      analyzeData,
+      ['non_empty_lines', 'code_lines'],
+    );
+    final todoCount = _firstAvailableInt(analyzeData, ['todo_count']);
+    final fixmeCount = _firstAvailableInt(analyzeData, ['fixme_count']);
+    final totalBytes = _firstAvailableInt(
+      analyzeData,
+      [
+        'total_bytes',
+        'total_size',
+        'bytes',
+        'repository_size',
+        'analyzed_bytes',
+      ],
+    );
 
     final languages = languageDistribution.entries
         .map(
@@ -336,7 +406,7 @@ class ProjectImportService {
     return AnalysisResult(
       totalFiles: totalCodeFilesFound,
       ignoredFiles: 0,
-      totalBytes: 0,
+      totalBytes: totalBytes,
       totalLines: totalLines,
       codeLines: nonEmptyLines,
       commentLines:

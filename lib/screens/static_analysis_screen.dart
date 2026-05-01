@@ -2,9 +2,11 @@ import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 
 import '../models/analysis_result.dart';
+import '../services/ai_service.dart';
 import '../services/analysis_service.dart';
 import '../services/project_import_service.dart';
 import '../theme/app_theme.dart';
+import '../widgets/codeatlas_appbar.dart';
 
 class StaticAnalysisScreen extends StatefulWidget {
   final String projectId;
@@ -23,11 +25,25 @@ class StaticAnalysisScreen extends StatefulWidget {
 class _StaticAnalysisScreenState extends State<StaticAnalysisScreen> {
   final ProjectImportService _importService = ProjectImportService();
   final AnalysisService _analysisService = AnalysisService();
+  final AIService _aiService = AIService();
+
+  final TextEditingController _promptController = TextEditingController();
+  final ScrollController _scrollController = ScrollController();
+  final GlobalKey _resultsSectionKey = GlobalKey();
 
   late Future<AnalysisResult?> _futureAnalysis;
   late Future<Map<String, dynamic>> _futureCloc;
 
   int touchedIndex = -1;
+
+  bool _isGeneratingAI = false;
+  String? _aiError;
+
+  String _selectedProvider = AIService.ollamaProvider;
+  String _selectedModel = AIService.defaultOllamaModel;
+
+  final Map<String, String> _aiResults = {};
+  final Map<String, bool> _expandedStates = {};
 
   final List<Color> _chartColors = const [
     Color(0xFF4FC3F7),
@@ -47,12 +63,100 @@ class _StaticAnalysisScreenState extends State<StaticAnalysisScreen> {
     _futureCloc = _analysisService.getClocAnalysis();
   }
 
+  @override
+  void dispose() {
+    _promptController.dispose();
+    _scrollController.dispose();
+    super.dispose();
+  }
+
   void _retry() {
     setState(() {
       _futureAnalysis = _importService.getProjectAnalysis(widget.projectId);
       _futureCloc = _analysisService.getClocAnalysis();
       touchedIndex = -1;
+      _isGeneratingAI = false;
+      _aiError = null;
+      _aiResults.clear();
+      _expandedStates.clear();
     });
+  }
+
+  String _resultKey(String provider, String model) => '$provider::$model';
+
+  String _providerText(String provider) {
+    switch (provider.toLowerCase()) {
+      case 'gemini':
+        return 'Gemini';
+      case 'ollama':
+        return 'Ollama';
+      default:
+        return provider;
+    }
+  }
+
+  String _cleanAiText(String text) {
+    var cleaned = text.trim();
+
+    cleaned = cleaned.replaceAll('```', '');
+    cleaned = cleaned.replaceAll('---', '');
+    cleaned = cleaned.replaceAll('**', '');
+    cleaned = cleaned.replaceAll('##', '');
+    cleaned = cleaned.replaceAll('#', '');
+
+    final rawLines = cleaned.split('\n');
+    final normalizedLines = <String>[];
+    bool previousWasEmpty = false;
+
+    for (var line in rawLines) {
+      line = line.trim();
+
+      if (line.startsWith('- ')) {
+        line = '• ${line.substring(2).trim()}';
+      }
+
+      final isEmpty = line.isEmpty;
+
+      if (isEmpty) {
+        if (!previousWasEmpty) {
+          normalizedLines.add('');
+        }
+        previousWasEmpty = true;
+      } else {
+        normalizedLines.add(line);
+        previousWasEmpty = false;
+      }
+    }
+
+    cleaned = normalizedLines.join('\n');
+
+    while (cleaned.contains('\n\n\n')) {
+      cleaned = cleaned.replaceAll('\n\n\n', '\n\n');
+    }
+
+    return cleaned.trim();
+  }
+
+  String _previewText(String text, {int maxLength = 220}) {
+    final normalized = text.replaceAll('\n', ' ').trim();
+    if (normalized.length <= maxLength) return normalized;
+    return '${normalized.substring(0, maxLength).trim()}...';
+  }
+
+  Future<void> _scrollToResultsSection() async {
+    await Future.delayed(const Duration(milliseconds: 150));
+
+    if (!mounted) return;
+
+    final targetContext = _resultsSectionKey.currentContext;
+    if (targetContext == null) return;
+
+    await Scrollable.ensureVisible(
+      targetContext,
+      duration: const Duration(milliseconds: 500),
+      curve: Curves.easeInOut,
+      alignment: 0.08,
+    );
   }
 
   String _formatBytes(int bytes) {
@@ -90,6 +194,120 @@ class _StaticAnalysisScreenState extends State<StaticAnalysisScreen> {
   double _percentValue(int value, int total) {
     if (total == 0) return 0;
     return (value / total) * 100;
+  }
+
+  Future<void> _generateAIAnalysis(
+    AnalysisResult analysis,
+    Map<String, dynamic> clocData,
+  ) async {
+    setState(() {
+      _isGeneratingAI = true;
+      _aiError = null;
+    });
+
+    final currentKey = _resultKey(_selectedProvider, _selectedModel);
+
+    try {
+      final languages = _analysisService.extractTopLanguagesFromCloc(
+        clocData,
+        limit: 20,
+      );
+
+      final sortedLanguages = [...languages]
+        ..sort((a, b) => b.value.compareTo(a.value));
+
+      final totalLines =
+          sortedLanguages.fold<int>(0, (sum, item) => sum + item.value);
+
+      final languageDistribution = <String, dynamic>{
+        for (final lang in sortedLanguages)
+          lang.key: {
+            'satir_sayisi': lang.value,
+          }
+      };
+
+      final result = await _aiService.analyzeProjectSummary(
+        projectName: widget.projectName,
+        primaryLanguage: sortedLanguages.isNotEmpty
+            ? sortedLanguages.first.key
+            : 'Bilinmiyor',
+        totalFiles: analysis.totalFiles,
+        totalLines: totalLines,
+        nonEmptyLines: totalLines,
+        languageDistribution: languageDistribution,
+        todoCount: analysis.todoCount,
+        provider: _selectedProvider,
+        model: _selectedModel,
+      );
+
+      if (!mounted) return;
+
+      setState(() {
+        _aiResults[currentKey] = _cleanAiText(result);
+        _expandedStates[currentKey] = false;
+      });
+
+      await _scrollToResultsSection();
+    } catch (e) {
+      if (!mounted) return;
+
+      setState(() {
+        _aiError = e.toString();
+      });
+    } finally {
+      if (!mounted) return;
+
+      setState(() {
+        _isGeneratingAI = false;
+      });
+    }
+  }
+
+  Future<void> _generateCustomPrompt() async {
+    final prompt = _promptController.text.trim();
+
+    if (prompt.isEmpty) {
+      setState(() {
+        _aiError = 'Lütfen önce bir istem gir.';
+      });
+      return;
+    }
+
+    setState(() {
+      _isGeneratingAI = true;
+      _aiError = null;
+    });
+
+    final currentKey = _resultKey(_selectedProvider, _selectedModel);
+
+    try {
+      final result = await _aiService.generate(
+        prompt: prompt,
+        provider: _selectedProvider,
+        model: _selectedModel,
+      );
+
+      if (!mounted) return;
+
+      setState(() {
+        _aiResults[currentKey] = _cleanAiText(result);
+        _expandedStates[currentKey] = false;
+      });
+
+      await _scrollToResultsSection();
+    } catch (e) {
+      if (!mounted) return;
+
+      setState(() {
+        _aiError = e.toString();
+      });
+    } finally {
+      if (!mounted) return;
+
+      setState(() {
+        _isGeneratingAI = false;
+      });
+    }
   }
 
   Widget _metricTile(
@@ -166,68 +384,6 @@ class _StaticAnalysisScreenState extends State<StaticAnalysisScreen> {
               '${analysis.todoCount}',
               icon: Icons.checklist,
             ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildLanguageCard(List<LanguageStat> topLanguages) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Yerel Dil Dağılımı',
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.w900,
-              ),
-            ),
-            const SizedBox(height: 6),
-            const Text(
-              'Mevcut AnalysisService sonucu',
-              style: TextStyle(color: AppColors.textSoft),
-            ),
-            const SizedBox(height: 12),
-            if (topLanguages.isEmpty)
-              const Text(
-                'Dil bilgisi bulunamadı.',
-                style: TextStyle(color: AppColors.textSoft),
-              )
-            else
-              ...topLanguages.map((language) {
-                return Padding(
-                  padding: const EdgeInsets.only(bottom: 10),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Expanded(
-                        child: Text(
-                          language.language,
-                          style: const TextStyle(
-                            fontWeight: FontWeight.w800,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Text(
-                          '${language.files} dosya • '
-                          '${language.lines} satır • '
-                          '${_formatBytes(language.bytes)}',
-                          style: const TextStyle(
-                            color: AppColors.textSoft,
-                          ),
-                          textAlign: TextAlign.right,
-                        ),
-                      ),
-                    ],
-                  ),
-                );
-              }),
           ],
         ),
       ),
@@ -314,7 +470,7 @@ class _StaticAnalysisScreenState extends State<StaticAnalysisScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'CLOC Dil Dağılımı',
+                    'Dil Dağılımı',
                     style: TextStyle(
                       fontSize: 18,
                       fontWeight: FontWeight.w900,
@@ -322,7 +478,7 @@ class _StaticAnalysisScreenState extends State<StaticAnalysisScreen> {
                   ),
                   SizedBox(height: 12),
                   Text(
-                    'Grafik için uygun CLOC verisi bulunamadı.',
+                    'Grafik için uygun dil verisi bulunamadı.',
                     style: TextStyle(color: AppColors.textSoft),
                   ),
                 ],
@@ -331,7 +487,7 @@ class _StaticAnalysisScreenState extends State<StaticAnalysisScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const Text(
-                    'CLOC Dil Dağılımı',
+                    'Dil Dağılımı',
                     style: TextStyle(
                       fontSize: 18,
                       fontWeight: FontWeight.w900,
@@ -339,7 +495,7 @@ class _StaticAnalysisScreenState extends State<StaticAnalysisScreen> {
                   ),
                   const SizedBox(height: 6),
                   const Text(
-                    'En çok kod satırına sahip ilk 6 dil',
+                    'Yüklenen projenin tespit edilen dil dağılımı',
                     style: TextStyle(color: AppColors.textSoft),
                   ),
                   const SizedBox(height: 20),
@@ -444,6 +600,269 @@ class _StaticAnalysisScreenState extends State<StaticAnalysisScreen> {
     );
   }
 
+  Widget _buildAISonucKartlari() {
+    if (_aiResults.isEmpty) {
+      return Container(
+        key: _resultsSectionKey,
+        width: double.infinity,
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: AppColors.navySoft.withOpacity(0.20),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color: AppColors.teal.withOpacity(0.10),
+          ),
+        ),
+        child: const Text(
+          'Henüz yapay zekâ analizi oluşturulmadı. Bir sağlayıcı ve model seçip analiz üretebilirsin.',
+          style: TextStyle(
+            color: AppColors.textSoft,
+            height: 1.5,
+          ),
+        ),
+      );
+    }
+
+    final entries = _aiResults.entries.toList().reversed.toList();
+
+    return Column(
+      key: _resultsSectionKey,
+      children: entries.map((entry) {
+        final key = entry.key;
+        final result = entry.value;
+        final parts = key.split('::');
+        final provider = parts.isNotEmpty ? parts.first : '';
+        final model = parts.length > 1 ? parts.last : '';
+        final isExpanded = _expandedStates[key] ?? false;
+        final preview = _previewText(result);
+
+        return Container(
+          margin: const EdgeInsets.only(bottom: 12),
+          decoration: BoxDecoration(
+            color: AppColors.navySoft.withOpacity(0.24),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color: AppColors.teal.withOpacity(0.12),
+            ),
+          ),
+          child: Theme(
+            data: Theme.of(context).copyWith(
+              dividerColor: Colors.transparent,
+            ),
+            child: ExpansionTile(
+              initiallyExpanded: isExpanded,
+              onExpansionChanged: (expanded) {
+                setState(() {
+                  _expandedStates[key] = expanded;
+                });
+              },
+              leading: const Icon(
+                Icons.smart_toy_outlined,
+                color: AppColors.teal,
+              ),
+              title: Text(
+                _providerText(provider),
+                style: const TextStyle(
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              subtitle: Text(
+                model,
+                style: const TextStyle(
+                  color: AppColors.textSoft,
+                ),
+              ),
+              childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+              children: [
+                const Divider(height: 16),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    isExpanded ? result : preview,
+                    style: TextStyle(
+                      height: 1.4,
+                      fontSize: isExpanded ? 14 : 13,
+                      color: isExpanded ? AppColors.text : AppColors.textSoft,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      }).toList(),
+    );
+  }
+
+  Widget _buildAIAnalysisCard(
+    AnalysisResult analysis,
+    Map<String, dynamic>? clocData,
+  ) {
+    final ollamaModels = AIService.supportedOllamaModels;
+    final modelItems = _selectedProvider == AIService.geminiProvider
+        ? [AIService.defaultGeminiModel]
+        : ollamaModels;
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Row(
+              children: [
+                Icon(Icons.auto_awesome, color: AppColors.teal),
+                SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Yapay Zekâ Analizi',
+                    style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            const Text(
+              'Statik analiz sonuçlarına göre yapay zekâ destekli yorum ve geliştirme önerileri üret.',
+              style: TextStyle(color: AppColors.textSoft),
+            ),
+            const SizedBox(height: 16),
+            DropdownButtonFormField<String>(
+              value: _selectedProvider,
+              decoration: const InputDecoration(
+                labelText: 'Sağlayıcı',
+                border: OutlineInputBorder(),
+              ),
+              items: AIService.supportedProviders.map((provider) {
+                return DropdownMenuItem<String>(
+                  value: provider,
+                  child: Text(_providerText(provider)),
+                );
+              }).toList(),
+              onChanged: _isGeneratingAI
+                  ? null
+                  : (value) {
+                      if (value == null) return;
+
+                      setState(() {
+                        _selectedProvider = value;
+                        _selectedModel = value == AIService.geminiProvider
+                            ? AIService.defaultGeminiModel
+                            : AIService.defaultOllamaModel;
+                      });
+                    },
+            ),
+            const SizedBox(height: 12),
+            DropdownButtonFormField<String>(
+              value: modelItems.contains(_selectedModel)
+                  ? _selectedModel
+                  : modelItems.first,
+              decoration: const InputDecoration(
+                labelText: 'Model',
+                border: OutlineInputBorder(),
+              ),
+              items: modelItems.map((model) {
+                return DropdownMenuItem<String>(
+                  value: model,
+                  child: Text(model),
+                );
+              }).toList(),
+              onChanged: _isGeneratingAI
+                  ? null
+                  : (value) {
+                      if (value == null) return;
+                      setState(() {
+                        _selectedModel = value;
+                      });
+                    },
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: _promptController,
+              minLines: 3,
+              maxLines: 6,
+              decoration: const InputDecoration(
+                labelText: 'İsteğe bağlı özel istem',
+                hintText:
+                    'İstersen burada kendi sorunu ya da özel istemini yazabilirsin. Boş bırakırsan proje özeti üzerinden otomatik analiz yapılır.',
+                border: OutlineInputBorder(),
+                alignLabelWithHint: true,
+              ),
+            ),
+            const SizedBox(height: 16),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                onPressed: _isGeneratingAI
+                    ? null
+                    : () {
+                        if (clocData == null) {
+                          setState(() {
+                            _aiError =
+                                'Dil dağılımı verisi henüz hazır değil. Lütfen biraz bekleyip tekrar dene.';
+                          });
+                          return;
+                        }
+
+                        _generateAIAnalysis(analysis, clocData);
+                      },
+                icon: _isGeneratingAI
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.psychology_alt_outlined),
+                label: const Text('Otomatik analiz oluştur'),
+              ),
+            ),
+            const SizedBox(height: 10),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: _isGeneratingAI ? null : _generateCustomPrompt,
+                icon: const Icon(Icons.edit_note),
+                label: const Text('Özel istemi çalıştır'),
+              ),
+            ),
+            if (_aiError != null) ...[
+              const SizedBox(height: 16),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.red.withOpacity(0.08),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.red.withOpacity(0.2)),
+                ),
+                child: Text(
+                  _aiError!,
+                  style: const TextStyle(
+                    color: Colors.redAccent,
+                    height: 1.4,
+                  ),
+                ),
+              ),
+            ],
+            const SizedBox(height: 16),
+            const Text(
+              'Oluşturulan Sonuçlar',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            const SizedBox(height: 10),
+            _buildAISonucKartlari(),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildTechnicalInfoCard() {
     return Card(
       child: Padding(
@@ -474,19 +893,49 @@ class _StaticAnalysisScreenState extends State<StaticAnalysisScreen> {
     );
   }
 
+  Widget _buildPageHeader() {
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Statik Analiz • ${widget.projectName}',
+            style: const TextStyle(
+              fontSize: 24,
+              fontWeight: FontWeight.w900,
+              color: AppColors.text,
+            ),
+          ),
+          const SizedBox(height: 6),
+          const Text(
+            'Projenin statik analiz sonuçlarını, dil dağılımını ve yapay zekâ destekli yorumları burada inceleyebilirsin.',
+            style: TextStyle(
+              color: AppColors.textSoft,
+              height: 1.4,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildAnalysisBody(
     AnalysisResult analysis,
     AsyncSnapshot<Map<String, dynamic>> clocSnapshot,
   ) {
-    final languages = [...analysis.languages]
-      ..sort((a, b) => b.bytes.compareTo(a.bytes));
-
-    final topLanguages = languages.take(6).toList();
-
     return ListView(
+      controller: _scrollController,
       padding: const EdgeInsets.only(bottom: 20),
       children: [
+        _buildPageHeader(),
         _buildSummaryCard(analysis),
+        const SizedBox(height: 12),
+        _buildAIAnalysisCard(
+          analysis,
+          clocSnapshot.hasData ? clocSnapshot.data : null,
+        ),
         const SizedBox(height: 12),
         if (clocSnapshot.connectionState == ConnectionState.waiting)
           const Card(
@@ -500,15 +949,13 @@ class _StaticAnalysisScreenState extends State<StaticAnalysisScreen> {
             child: Padding(
               padding: const EdgeInsets.all(16),
               child: Text(
-                'CLOC grafiği yüklenemedi:\n${clocSnapshot.error}',
+                'Dil dağılımı yüklenemedi:\n${clocSnapshot.error}',
                 style: const TextStyle(color: AppColors.textSoft),
               ),
             ),
           )
         else if (clocSnapshot.hasData)
           _buildClocChartCard(clocSnapshot.data!),
-        const SizedBox(height: 12),
-        _buildLanguageCard(topLanguages),
         const SizedBox(height: 12),
         _buildTechnicalInfoCard(),
       ],
@@ -556,20 +1003,7 @@ class _StaticAnalysisScreenState extends State<StaticAnalysisScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        backgroundColor: AppColors.navy,
-        title: Row(
-          children: [
-            const _AnimatedLogo(),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Text(
-                'Statik Analiz • ${widget.projectName}',
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-          ],
-        ),
+      appBar: CodeAtlasAppBar(
         actions: [
           IconButton(
             tooltip: 'Yenile',
@@ -658,54 +1092,6 @@ class _StateCard extends StatelessWidget {
             ],
           ),
         ),
-      ),
-    );
-  }
-}
-
-class _AnimatedLogo extends StatefulWidget {
-  const _AnimatedLogo();
-
-  @override
-  State<_AnimatedLogo> createState() => _AnimatedLogoState();
-}
-
-class _AnimatedLogoState extends State<_AnimatedLogo>
-    with SingleTickerProviderStateMixin {
-  late AnimationController _controller;
-  late Animation<double> _scaleAnimation;
-
-  @override
-  void initState() {
-    super.initState();
-
-    _controller = AnimationController(
-      vsync: this,
-      duration: const Duration(seconds: 2),
-    )..repeat(reverse: true);
-
-    _scaleAnimation = Tween<double>(begin: 0.92, end: 1.08).animate(
-      CurvedAnimation(
-        parent: _controller,
-        curve: Curves.easeInOut,
-      ),
-    );
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return ScaleTransition(
-      scale: _scaleAnimation,
-      child: Image.asset(
-        'assets/icon/icon_app.png',
-        width: 32,
-        height: 32,
       ),
     );
   }

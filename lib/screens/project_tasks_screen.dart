@@ -5,6 +5,7 @@ import '../services/project_service.dart';
 import '../services/task_service.dart';
 import '../theme/app_theme.dart';
 import '../theme/priority_style.dart';
+import '../widgets/codeatlas_appbar.dart';
 import 'activity_log_screen.dart';
 import 'add_task_screen.dart';
 
@@ -834,6 +835,34 @@ class _ProjectTasksScreenState extends State<ProjectTasksScreen> {
     );
   }
 
+  Widget _buildPageHeader() {
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            widget.projectName,
+            style: const TextStyle(
+              fontSize: 24,
+              fontWeight: FontWeight.w900,
+              color: AppColors.text,
+            ),
+          ),
+          const SizedBox(height: 6),
+          const Text(
+            'Görevleri görüntüle, filtrele, düzenle ve proje ilerlemesini takip et.',
+            style: TextStyle(
+              color: AppColors.textSoft,
+              height: 1.4,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildTaskList() {
     return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
       stream: _service.tasksStream(
@@ -887,9 +916,7 @@ class _ProjectTasksScreenState extends State<ProjectTasksScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        backgroundColor: AppColors.navy,
-        title: Text(widget.projectName),
+      appBar: CodeAtlasAppBar(
         actions: [
           IconButton(
             tooltip: 'Üyeler',
@@ -917,6 +944,7 @@ class _ProjectTasksScreenState extends State<ProjectTasksScreen> {
         padding: const EdgeInsets.all(16),
         child: Column(
           children: [
+            _buildPageHeader(),
             Row(
               children: [
                 Expanded(

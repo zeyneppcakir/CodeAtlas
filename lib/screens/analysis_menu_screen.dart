@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
 import 'llm_analysis_screen.dart';
 import 'static_analysis_screen.dart';
+import '../widgets/codeatlas_appbar.dart';
 
 class AnalysisMenuScreen extends StatelessWidget {
   final String? projectId;
@@ -96,9 +97,13 @@ class AnalysisMenuScreen extends StatelessWidget {
         _hasProject ? projectName!.trim() : 'Proje seçilmedi';
 
     return Scaffold(
-      appBar: AppBar(
-        backgroundColor: AppColors.navy,
-        title: Text('Kod Analizi • $selectedProjectName'),
+      appBar: CodeAtlasAppBar(
+        actions: [
+          IconButton(
+            onPressed: () => Navigator.pop(context),
+            icon: const Icon(Icons.arrow_back),
+          ),
+        ],
       ),
       body: Padding(
         padding: const EdgeInsets.all(16),

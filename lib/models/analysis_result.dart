@@ -29,12 +29,17 @@ class LanguageStat {
     return 0;
   }
 
+  static String _toStr(dynamic value) {
+    if (value == null) return '';
+    return value.toString();
+  }
+
   factory LanguageStat.fromMap(Map<String, dynamic> map) {
     return LanguageStat(
-      language: (map['language'] ?? '').toString(),
-      files: _toInt(map['files']),
-      bytes: _toInt(map['bytes']),
-      lines: _toInt(map['lines']),
+      language: _toStr(map['language']),
+      files: _toInt(map['files'] ?? map['file_count']),
+      bytes: _toInt(map['bytes'] ?? map['total_bytes']),
+      lines: _toInt(map['lines'] ?? map['line_count']),
     );
   }
 
@@ -106,7 +111,7 @@ class AnalysisResult {
   }
 
   factory AnalysisResult.fromMap(Map<String, dynamic> map) {
-    final rawLanguages = map['languages'];
+    final rawLanguages = map['languages'] ?? map['language_distribution'];
     final languages = <LanguageStat>[];
 
     if (rawLanguages is List) {
@@ -119,16 +124,29 @@ class AnalysisResult {
           );
         }
       }
+    } else if (rawLanguages is Map) {
+      rawLanguages.forEach((key, value) {
+        if (value is Map) {
+          languages.add(
+            LanguageStat(
+              language: key.toString(),
+              files: _toInt(value['files'] ?? value['file_count']),
+              bytes: _toInt(value['bytes'] ?? value['total_bytes']),
+              lines: _toInt(value['lines'] ?? value['line_count']),
+            ),
+          );
+        }
+      });
     }
 
     return AnalysisResult(
-      totalFiles: _toInt(map['totalFiles']),
-      ignoredFiles: _toInt(map['ignoredFiles']),
-      totalBytes: _toInt(map['totalBytes']),
-      totalLines: _toInt(map['totalLines']),
-      codeLines: _toInt(map['codeLines']),
-      commentLines: _toInt(map['commentLines']),
-      todoCount: _toInt(map['todoCount']),
+      totalFiles: _toInt(map['totalFiles'] ?? map['total_files']),
+      ignoredFiles: _toInt(map['ignoredFiles'] ?? map['ignored_files']),
+      totalBytes: _toInt(map['totalBytes'] ?? map['total_bytes']),
+      totalLines: _toInt(map['totalLines'] ?? map['total_lines']),
+      codeLines: _toInt(map['codeLines'] ?? map['code_lines']),
+      commentLines: _toInt(map['commentLines'] ?? map['comment_lines']),
+      todoCount: _toInt(map['todoCount'] ?? map['todo_count']),
       languages: List.unmodifiable(languages),
     );
   }

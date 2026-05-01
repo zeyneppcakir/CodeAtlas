@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 
 import '../theme/app_theme.dart';
+import '../widgets/codeatlas_appbar.dart';
 
 class ActivityLogScreen extends StatelessWidget {
   final String projectId;
@@ -63,9 +64,13 @@ class ActivityLogScreen extends StatelessWidget {
         .limit(80);
 
     return Scaffold(
-      appBar: AppBar(
-        backgroundColor: AppColors.navy,
-        title: Text('Aktivite • $projectName'),
+      appBar: CodeAtlasAppBar(
+        actions: [
+          IconButton(
+            onPressed: () => Navigator.pop(context),
+            icon: const Icon(Icons.arrow_back),
+          ),
+        ],
       ),
       body: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
         stream: logsQuery.snapshots(),

@@ -1,7 +1,36 @@
 import base64
+from typing import Any
+
 import requests
 
 from app.services.llm_service import analyze_with_gemini
+
+
+GITHUB_TIMEOUT = 20
+
+CODE_EXTENSIONS = [
+    ".py",
+    ".dart",
+    ".js",
+    ".ts",
+    ".java",
+    ".kt",
+    ".cpp",
+    ".c",
+    ".cs",
+]
+
+EXTENSION_LANGUAGE_MAP = {
+    ".py": "Python",
+    ".dart": "Dart",
+    ".js": "JavaScript",
+    ".ts": "TypeScript",
+    ".java": "Java",
+    ".kt": "Kotlin",
+    ".cpp": "C++",
+    ".c": "C",
+    ".cs": "C#",
+}
 
 
 def parse_github_url(repo_url: str):
@@ -21,11 +50,55 @@ def parse_github_url(repo_url: str):
     return owner, repo
 
 
+def _github_get(url: str):
+    response = requests.get(url, timeout=GITHUB_TIMEOUT)
+    return response
+
+
+def _is_code_file(path: str) -> bool:
+    path_lower = path.lower()
+    return any(path_lower.endswith(ext) for ext in CODE_EXTENSIONS)
+
+
+def _should_ignore_path(path: str) -> bool:
+    normalized = path.replace("\\", "/").lower()
+
+    if normalized.endswith("/.ds_store") or normalized.endswith("thumbs.db"):
+        return True
+
+    ignore_contains = [
+        "/node_modules/",
+        "/build/",
+        "/dist/",
+        "/.git/",
+        "/.dart_tool/",
+        "/.idea/",
+        "/.vscode/",
+        "/.gradle/",
+        "/pods/",
+        "/deriveddata/",
+    ]
+
+    if any(token in normalized for token in ignore_contains):
+        return True
+
+    def is_platform_folder(folder: str) -> bool:
+        return normalized.startswith(f"{folder}/") or f"/{folder}/" in normalized
+
+    if any(
+        is_platform_folder(folder)
+        for folder in ["android", "ios", "windows", "linux", "macos"]
+    ):
+        return True
+
+    return False
+
+
 def get_repo_info(repo_url: str):
     owner, repo = parse_github_url(repo_url)
 
     github_api_url = f"https://api.github.com/repos/{owner}/{repo}"
-    response = requests.get(github_api_url, timeout=15)
+    response = _github_get(github_api_url)
 
     if response.status_code != 200:
         raise ValueError(
@@ -42,6 +115,7 @@ def get_repo_info(repo_url: str):
         "default_branch": repo_data.get("default_branch"),
         "owner": repo_data.get("owner", {}).get("login"),
         "html_url": repo_data.get("html_url"),
+        "size_kb": repo_data.get("size", 0),
     }
 
 
@@ -49,41 +123,30 @@ def get_repo_files(repo_url: str):
     owner, repo = parse_github_url(repo_url)
 
     api_url = f"https://api.github.com/repos/{owner}/{repo}/contents"
-    response = requests.get(api_url, timeout=15)
+    response = _github_get(api_url)
 
     if response.status_code != 200:
         raise ValueError("Repo dosyaları alınamadı.")
 
     files = response.json()
-
-    code_extensions = [
-        ".py",
-        ".dart",
-        ".js",
-        ".ts",
-        ".java",
-        ".kt",
-        ".cpp",
-        ".c",
-        ".cs",
-    ]
-
     code_files = []
 
     for file in files:
-        if file.get("type") == "file":
-            name = file.get("name", "")
+        if file.get("type") != "file":
+            continue
 
-            for ext in code_extensions:
-                if name.endswith(ext):
-                    code_files.append(
-                        {
-                            "name": name,
-                            "type": file.get("type"),
-                            "path": file.get("path"),
-                        }
-                    )
-                    break
+        name = file.get("name", "")
+        path = file.get("path", "")
+
+        if _is_code_file(path) and not _should_ignore_path(path):
+            code_files.append(
+                {
+                    "name": name,
+                    "type": file.get("type"),
+                    "path": path,
+                    "size": file.get("size", 0),
+                }
+            )
 
     return {
         "repo": repo,
@@ -96,59 +159,49 @@ def get_repo_tree(repo_url: str):
     owner, repo = parse_github_url(repo_url)
 
     api_url = f"https://api.github.com/repos/{owner}/{repo}/git/trees/HEAD?recursive=1"
-    response = requests.get(api_url, timeout=20)
+    response = _github_get(api_url)
 
     if response.status_code != 200:
         raise ValueError("Repo tree alınamadı.")
 
     data = response.json()
 
-    code_extensions = [
-        ".py",
-        ".dart",
-        ".js",
-        ".ts",
-        ".java",
-        ".kt",
-        ".cpp",
-        ".c",
-        ".cs",
-    ]
-
     code_files = []
+    total_bytes = 0
 
     for file in data.get("tree", []):
-        if file.get("type") == "blob":
-            path = file.get("path", "")
+        if file.get("type") != "blob":
+            continue
 
-            for ext in code_extensions:
-                if path.endswith(ext):
-                    code_files.append(path)
-                    break
+        path = file.get("path", "")
+
+        if _should_ignore_path(path):
+            continue
+
+        if _is_code_file(path):
+            size = int(file.get("size", 0) or 0)
+            total_bytes += size
+            code_files.append(
+                {
+                    "path": path,
+                    "size": size,
+                }
+            )
 
     return {
         "repo": repo,
         "total_files_scanned": len(data.get("tree", [])),
         "code_files_found": len(code_files),
+        "total_bytes": total_bytes,
         "files": code_files[:50],
     }
 
 
 def detect_language_from_path(path: str):
-    extension_map = {
-        ".py": "Python",
-        ".dart": "Dart",
-        ".js": "JavaScript",
-        ".ts": "TypeScript",
-        ".java": "Java",
-        ".kt": "Kotlin",
-        ".cpp": "C++",
-        ".c": "C",
-        ".cs": "C#",
-    }
+    path_lower = path.lower()
 
-    for ext, language in extension_map.items():
-        if path.endswith(ext):
+    for ext, language in EXTENSION_LANGUAGE_MAP.items():
+        if path_lower.endswith(ext):
             return language
 
     return "Unknown"
@@ -156,41 +209,37 @@ def detect_language_from_path(path: str):
 
 def get_code_file_paths(owner: str, repo: str):
     api_url = f"https://api.github.com/repos/{owner}/{repo}/git/trees/HEAD?recursive=1"
-    response = requests.get(api_url, timeout=20)
+    response = _github_get(api_url)
 
     if response.status_code != 200:
         raise ValueError("Repo tree alınamadı.")
 
     data = response.json()
-
-    code_extensions = [
-        ".py",
-        ".dart",
-        ".js",
-        ".ts",
-        ".java",
-        ".kt",
-        ".cpp",
-        ".c",
-        ".cs",
-    ]
-
     code_files = []
 
     for file in data.get("tree", []):
-        if file.get("type") == "blob":
-            path = file.get("path", "")
-            for ext in code_extensions:
-                if path.endswith(ext):
-                    code_files.append(path)
-                    break
+        if file.get("type") != "blob":
+            continue
+
+        path = file.get("path", "")
+
+        if _should_ignore_path(path):
+            continue
+
+        if _is_code_file(path):
+            code_files.append(
+                {
+                    "path": path,
+                    "size": int(file.get("size", 0) or 0),
+                }
+            )
 
     return code_files
 
 
 def get_file_content(owner: str, repo: str, path: str):
     api_url = f"https://api.github.com/repos/{owner}/{repo}/contents/{path}"
-    response = requests.get(api_url, timeout=20)
+    response = _github_get(api_url)
 
     if response.status_code != 200:
         return None
@@ -236,7 +285,10 @@ Lütfen şu başlıklarda çıktı üret:
 5. Olası riskler veya eksikler
 6. Geliştirme için 3 somut öneri
 
-Cevabın düzenli ve anlaşılır olsun.
+Kurallar:
+- Markdown kullanma.
+- #, ##, **, ``` ve benzeri işaretler kullanma.
+- Yanıt kısa, net ve düzenli olsun.
 
 Kodlar:
 {combined_code}
@@ -244,11 +296,23 @@ Kodlar:
     return prompt
 
 
+def _extract_llm_output(result: Any):
+    if result is None:
+        return None
+
+    if isinstance(result, dict):
+        output = result.get("output")
+        if output is not None:
+            return str(output).strip()
+
+    return str(result).strip()
+
+
 def analyze_repo_code(repo_url: str, max_files: int = 10):
     owner, repo = parse_github_url(repo_url)
 
-    code_paths = get_code_file_paths(owner, repo)
-    selected_paths = code_paths[:max_files]
+    code_files = get_code_file_paths(owner, repo)
+    selected_files = code_files[:max_files]
 
     total_lines = 0
     non_empty_lines = 0
@@ -257,18 +321,22 @@ def analyze_repo_code(repo_url: str, max_files: int = 10):
     hack_count = 0
     bug_count = 0
     analyzed_files = 0
-    language_distribution = {}
+    total_bytes = 0
 
+    language_distribution = {}
     file_summaries = []
     llm_input_files = []
 
-    for path in selected_paths:
-        content = get_file_content(owner, repo, path)
+    for file_info in selected_files:
+        path = file_info["path"]
+        file_size = int(file_info.get("size", 0) or 0)
 
+        content = get_file_content(owner, repo, path)
         if not content:
             continue
 
         analyzed_files += 1
+        total_bytes += file_size
 
         language = detect_language_from_path(path)
         language_distribution[language] = language_distribution.get(language, 0) + 1
@@ -305,6 +373,7 @@ def analyze_repo_code(repo_url: str, max_files: int = 10):
             {
                 "path": path,
                 "language": language,
+                "size_bytes": file_size,
                 "total_lines": file_total_lines,
                 "non_empty_lines": file_non_empty_lines,
                 "todo": file_todo,
@@ -328,15 +397,17 @@ def analyze_repo_code(repo_url: str, max_files: int = 10):
     if llm_input_files:
         try:
             prompt = build_repo_prompt(repo, llm_input_files)
-            llm_analysis = analyze_with_gemini(prompt)
+            llm_result = analyze_with_gemini(prompt)
+            llm_analysis = _extract_llm_output(llm_result)
         except Exception as e:
             llm_error = f"Gemini analizi sırasında hata oluştu: {str(e)}"
 
     return {
         "repo": repo,
-        "total_code_files_found": len(code_paths),
+        "total_code_files_found": len(code_files),
         "analyzed_files": analyzed_files,
         "max_files_limit": max_files,
+        "total_bytes": total_bytes,
         "total_lines": total_lines,
         "non_empty_lines": non_empty_lines,
         "todo_count": todo_count,
