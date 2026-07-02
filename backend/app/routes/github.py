@@ -42,4 +42,31 @@ def scan_repo(data: RepoRequest):
 
 @router.post("/analyze")
 def analyze_repo(data: RepoRequest):
-    return _handle_service_call(analyze_repo_code, data.repo_url)
+    try:
+        return analyze_repo_code(
+            repo_url=data.repo_url,
+            run_llm=False
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Analiz sırasında hata oluştu: {str(e)}",
+        )
+
+
+@router.post("/analyze-with-llm")
+def analyze_repo_with_llm(data: RepoRequest):
+    try:
+        return analyze_repo_code(
+            repo_url=data.repo_url,
+            run_llm=True
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"LLM analizi sırasında hata oluştu: {str(e)}",
+        )

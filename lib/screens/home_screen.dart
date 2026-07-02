@@ -67,14 +67,7 @@ class HomeScreen extends StatelessWidget {
     final user = FirebaseAuth.instance.currentUser;
 
     return Scaffold(
-      appBar: CodeAtlasAppBar(
-        actions: [
-          IconButton(
-            onPressed: () => Navigator.pop(context),
-            icon: const Icon(Icons.arrow_back),
-          ),
-        ],
-      ),
+      appBar: const CodeAtlasAppBar(),
       body: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
