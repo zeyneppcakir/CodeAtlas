@@ -9,15 +9,8 @@ from app.services.llm_service import analyze_with_gemini
 GITHUB_TIMEOUT = 20
 
 CODE_EXTENSIONS = [
-    ".py",
-    ".dart",
-    ".js",
-    ".ts",
-    ".java",
-    ".kt",
-    ".cpp",
-    ".c",
-    ".cs",
+    ".py", ".dart", ".js", ".ts", ".java",
+    ".kt", ".cpp", ".c", ".cs",
 ]
 
 EXTENSION_LANGUAGE_MAP = {
@@ -44,15 +37,11 @@ def parse_github_url(repo_url: str):
     if len(parts) < 2:
         raise ValueError("Repo URL eksik veya hatalı.")
 
-    owner = parts[0]
-    repo = parts[1]
-
-    return owner, repo
+    return parts[0], parts[1]
 
 
 def _github_get(url: str):
-    response = requests.get(url, timeout=GITHUB_TIMEOUT)
-    return response
+    return requests.get(url, timeout=GITHUB_TIMEOUT)
 
 
 def _is_code_file(path: str) -> bool:
@@ -77,6 +66,9 @@ def _should_ignore_path(path: str) -> bool:
         "/.gradle/",
         "/pods/",
         "/deriveddata/",
+        "/__pycache__/",
+        "/venv/",
+        "/env/",
     ]
 
     if any(token in normalized for token in ignore_contains):
@@ -85,10 +77,7 @@ def _should_ignore_path(path: str) -> bool:
     def is_platform_folder(folder: str) -> bool:
         return normalized.startswith(f"{folder}/") or f"/{folder}/" in normalized
 
-    if any(
-        is_platform_folder(folder)
-        for folder in ["android", "ios", "windows", "linux", "macos"]
-    ):
+    if any(is_platform_folder(folder) for folder in ["android", "ios", "windows", "linux", "macos"]):
         return True
 
     return False
@@ -181,12 +170,7 @@ def get_repo_tree(repo_url: str):
         if _is_code_file(path):
             size = int(file.get("size", 0) or 0)
             total_bytes += size
-            code_files.append(
-                {
-                    "path": path,
-                    "size": size,
-                }
-            )
+            code_files.append({"path": path, "size": size})
 
     return {
         "repo": repo,
@@ -270,7 +254,7 @@ def build_repo_prompt(repo: str, file_contents: list[dict]):
 
     combined_code = "\n".join(combined_text_parts)
 
-    prompt = f"""
+    return f"""
 Sen deneyimli bir yazılım mimarı ve kod analiz uzmanısın.
 
 Aşağıda "{repo}" adlı GitHub reposundan alınmış bazı kaynak kod dosyaları var.
@@ -293,7 +277,6 @@ Kurallar:
 Kodlar:
 {combined_code}
 """
-    return prompt
 
 
 def _extract_llm_output(result: Any):
@@ -308,7 +291,7 @@ def _extract_llm_output(result: Any):
     return str(result).strip()
 
 
-def analyze_repo_code(repo_url: str, max_files: int = 10):
+def analyze_repo_code(repo_url: str, max_files: int = 10, run_llm: bool = False):
     owner, repo = parse_github_url(repo_url)
 
     code_files = get_code_file_paths(owner, repo)
@@ -335,18 +318,20 @@ def analyze_repo_code(repo_url: str, max_files: int = 10):
         if not content:
             continue
 
-        analyzed_files += 1
-        total_bytes += file_size
-
         language = detect_language_from_path(path)
-        language_distribution[language] = language_distribution.get(language, 0) + 1
-
         lines = content.splitlines()
+
         file_total_lines = len(lines)
         file_non_empty_lines = len([line for line in lines if line.strip()])
 
+        analyzed_files += 1
+        total_bytes += file_size
         total_lines += file_total_lines
         non_empty_lines += file_non_empty_lines
+
+        language_distribution[language] = (
+            language_distribution.get(language, 0) + file_non_empty_lines
+        )
 
         file_todo = 0
         file_fixme = 0
@@ -383,18 +368,19 @@ def analyze_repo_code(repo_url: str, max_files: int = 10):
             }
         )
 
-        llm_input_files.append(
-            {
-                "path": path,
-                "language": language,
-                "content": content[:4000],
-            }
-        )
+        if run_llm:
+            llm_input_files.append(
+                {
+                    "path": path,
+                    "language": language,
+                    "content": content[:4000],
+                }
+            )
 
     llm_analysis = None
     llm_error = None
 
-    if llm_input_files:
+    if run_llm and llm_input_files:
         try:
             prompt = build_repo_prompt(repo, llm_input_files)
             llm_result = analyze_with_gemini(prompt)

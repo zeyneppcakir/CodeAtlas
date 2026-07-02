@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 
 import '../models/analysis_result.dart';
 import '../services/ai_service.dart';
-import '../services/analysis_service.dart';
 import '../services/project_import_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/codeatlas_appbar.dart';
@@ -24,7 +23,6 @@ class StaticAnalysisScreen extends StatefulWidget {
 
 class _StaticAnalysisScreenState extends State<StaticAnalysisScreen> {
   final ProjectImportService _importService = ProjectImportService();
-  final AnalysisService _analysisService = AnalysisService();
   final AIService _aiService = AIService();
 
   final TextEditingController _promptController = TextEditingController();
@@ -32,7 +30,6 @@ class _StaticAnalysisScreenState extends State<StaticAnalysisScreen> {
   final GlobalKey _resultsSectionKey = GlobalKey();
 
   late Future<AnalysisResult?> _futureAnalysis;
-  late Future<Map<String, dynamic>> _futureCloc;
 
   int touchedIndex = -1;
 
@@ -60,7 +57,6 @@ class _StaticAnalysisScreenState extends State<StaticAnalysisScreen> {
   void initState() {
     super.initState();
     _futureAnalysis = _importService.getProjectAnalysis(widget.projectId);
-    _futureCloc = _analysisService.getClocAnalysis();
   }
 
   @override
@@ -73,7 +69,6 @@ class _StaticAnalysisScreenState extends State<StaticAnalysisScreen> {
   void _retry() {
     setState(() {
       _futureAnalysis = _importService.getProjectAnalysis(widget.projectId);
-      _futureCloc = _analysisService.getClocAnalysis();
       touchedIndex = -1;
       _isGeneratingAI = false;
       _aiError = null;
@@ -118,9 +113,7 @@ class _StaticAnalysisScreenState extends State<StaticAnalysisScreen> {
       final isEmpty = line.isEmpty;
 
       if (isEmpty) {
-        if (!previousWasEmpty) {
-          normalizedLines.add('');
-        }
+        if (!previousWasEmpty) normalizedLines.add('');
         previousWasEmpty = true;
       } else {
         normalizedLines.add(line);
@@ -196,10 +189,23 @@ class _StaticAnalysisScreenState extends State<StaticAnalysisScreen> {
     return (value / total) * 100;
   }
 
-  Future<void> _generateAIAnalysis(
-    AnalysisResult analysis,
-    Map<String, dynamic> clocData,
-  ) async {
+  List<MapEntry<String, int>> _languageEntriesFromAnalysis(
+    AnalysisResult analysis, {
+    int limit = 20,
+  }) {
+    final entries = analysis.languages
+        .map((lang) {
+          final value = lang.lines > 0 ? lang.lines : lang.files;
+          return MapEntry(lang.language, value);
+        })
+        .where((entry) => entry.value > 0)
+        .toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+
+    return entries.take(limit).toList();
+  }
+
+  Future<void> _generateAIAnalysis(AnalysisResult analysis) async {
     setState(() {
       _isGeneratingAI = true;
       _aiError = null;
@@ -208,16 +214,12 @@ class _StaticAnalysisScreenState extends State<StaticAnalysisScreen> {
     final currentKey = _resultKey(_selectedProvider, _selectedModel);
 
     try {
-      final languages = _analysisService.extractTopLanguagesFromCloc(
-        clocData,
-        limit: 20,
+      final sortedLanguages = _languageEntriesFromAnalysis(analysis, limit: 20);
+
+      final totalLines = sortedLanguages.fold<int>(
+        0,
+        (sum, item) => sum + item.value,
       );
-
-      final sortedLanguages = [...languages]
-        ..sort((a, b) => b.value.compareTo(a.value));
-
-      final totalLines =
-          sortedLanguages.fold<int>(0, (sum, item) => sum + item.value);
 
       final languageDistribution = <String, dynamic>{
         for (final lang in sortedLanguages)
@@ -232,8 +234,8 @@ class _StaticAnalysisScreenState extends State<StaticAnalysisScreen> {
             ? sortedLanguages.first.key
             : 'Bilinmiyor',
         totalFiles: analysis.totalFiles,
-        totalLines: totalLines,
-        nonEmptyLines: totalLines,
+        totalLines: totalLines > 0 ? totalLines : analysis.totalLines,
+        nonEmptyLines: analysis.codeLines,
         languageDistribution: languageDistribution,
         todoCount: analysis.todoCount,
         provider: _selectedProvider,
@@ -250,13 +252,11 @@ class _StaticAnalysisScreenState extends State<StaticAnalysisScreen> {
       await _scrollToResultsSection();
     } catch (e) {
       if (!mounted) return;
-
       setState(() {
         _aiError = e.toString();
       });
     } finally {
       if (!mounted) return;
-
       setState(() {
         _isGeneratingAI = false;
       });
@@ -297,24 +297,18 @@ class _StaticAnalysisScreenState extends State<StaticAnalysisScreen> {
       await _scrollToResultsSection();
     } catch (e) {
       if (!mounted) return;
-
       setState(() {
         _aiError = e.toString();
       });
     } finally {
       if (!mounted) return;
-
       setState(() {
         _isGeneratingAI = false;
       });
     }
   }
 
-  Widget _metricTile(
-    String label,
-    String value, {
-    IconData? icon,
-  }) {
+  Widget _metricTile(String label, String value, {IconData? icon}) {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -349,10 +343,7 @@ class _StaticAnalysisScreenState extends State<StaticAnalysisScreen> {
           children: [
             const Text(
               'Genel Özet',
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.w900,
-              ),
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
             ),
             const SizedBox(height: 12),
             _metricTile(
@@ -390,7 +381,7 @@ class _StaticAnalysisScreenState extends State<StaticAnalysisScreen> {
     );
   }
 
-  Widget _buildClocBarRow({
+  Widget _buildLanguageBarRow({
     required String language,
     required int codeLines,
     required int totalCode,
@@ -418,9 +409,7 @@ class _StaticAnalysisScreenState extends State<StaticAnalysisScreen> {
               Expanded(
                 child: Text(
                   language,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w700,
-                  ),
+                  style: const TextStyle(fontWeight: FontWeight.w700),
                 ),
               ),
               Text(
@@ -433,9 +422,7 @@ class _StaticAnalysisScreenState extends State<StaticAnalysisScreen> {
               const SizedBox(width: 10),
               Text(
                 '$codeLines satır',
-                style: const TextStyle(
-                  color: AppColors.textSoft,
-                ),
+                style: const TextStyle(color: AppColors.textSoft),
               ),
             ],
           ),
@@ -454,12 +441,8 @@ class _StaticAnalysisScreenState extends State<StaticAnalysisScreen> {
     );
   }
 
-  Widget _buildClocChartCard(Map<String, dynamic> clocResponse) {
-    final languages = _analysisService.extractTopLanguagesFromCloc(
-      clocResponse,
-      limit: 6,
-    );
-
+  Widget _buildLanguageChartCard(AnalysisResult analysis) {
+    final languages = _languageEntriesFromAnalysis(analysis, limit: 6);
     final totalCode = languages.fold<int>(0, (sum, item) => sum + item.value);
 
     return Card(
@@ -471,10 +454,7 @@ class _StaticAnalysisScreenState extends State<StaticAnalysisScreen> {
                 children: [
                   Text(
                     'Dil Dağılımı',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w900,
-                    ),
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
                   ),
                   SizedBox(height: 12),
                   Text(
@@ -488,10 +468,7 @@ class _StaticAnalysisScreenState extends State<StaticAnalysisScreen> {
                 children: [
                   const Text(
                     'Dil Dağılımı',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w900,
-                    ),
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
                   ),
                   const SizedBox(height: 6),
                   const Text(
@@ -579,15 +556,12 @@ class _StaticAnalysisScreenState extends State<StaticAnalysisScreen> {
                   const SizedBox(height: 20),
                   const Text(
                     'Dil yüzdeleri',
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w800,
-                    ),
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
                   ),
                   const SizedBox(height: 12),
                   ...List.generate(languages.length, (index) {
                     final item = languages[index];
-                    return _buildClocBarRow(
+                    return _buildLanguageBarRow(
                       language: item.key,
                       codeLines: item.value,
                       totalCode: totalCode,
@@ -609,16 +583,11 @@ class _StaticAnalysisScreenState extends State<StaticAnalysisScreen> {
         decoration: BoxDecoration(
           color: AppColors.navySoft.withOpacity(0.20),
           borderRadius: BorderRadius.circular(14),
-          border: Border.all(
-            color: AppColors.teal.withOpacity(0.10),
-          ),
+          border: Border.all(color: AppColors.teal.withOpacity(0.10)),
         ),
         child: const Text(
           'Henüz yapay zekâ analizi oluşturulmadı. Bir sağlayıcı ve model seçip analiz üretebilirsin.',
-          style: TextStyle(
-            color: AppColors.textSoft,
-            height: 1.5,
-          ),
+          style: TextStyle(color: AppColors.textSoft, height: 1.5),
         ),
       );
     }
@@ -641,14 +610,10 @@ class _StaticAnalysisScreenState extends State<StaticAnalysisScreen> {
           decoration: BoxDecoration(
             color: AppColors.navySoft.withOpacity(0.24),
             borderRadius: BorderRadius.circular(14),
-            border: Border.all(
-              color: AppColors.teal.withOpacity(0.12),
-            ),
+            border: Border.all(color: AppColors.teal.withOpacity(0.12)),
           ),
           child: Theme(
-            data: Theme.of(context).copyWith(
-              dividerColor: Colors.transparent,
-            ),
+            data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
             child: ExpansionTile(
               initiallyExpanded: isExpanded,
               onExpansionChanged: (expanded) {
@@ -662,15 +627,11 @@ class _StaticAnalysisScreenState extends State<StaticAnalysisScreen> {
               ),
               title: Text(
                 _providerText(provider),
-                style: const TextStyle(
-                  fontWeight: FontWeight.w800,
-                ),
+                style: const TextStyle(fontWeight: FontWeight.w800),
               ),
               subtitle: Text(
                 model,
-                style: const TextStyle(
-                  color: AppColors.textSoft,
-                ),
+                style: const TextStyle(color: AppColors.textSoft),
               ),
               childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
               children: [
@@ -694,10 +655,7 @@ class _StaticAnalysisScreenState extends State<StaticAnalysisScreen> {
     );
   }
 
-  Widget _buildAIAnalysisCard(
-    AnalysisResult analysis,
-    Map<String, dynamic>? clocData,
-  ) {
+  Widget _buildAIAnalysisCard(AnalysisResult analysis) {
     final ollamaModels = AIService.supportedOllamaModels;
     final modelItems = _selectedProvider == AIService.geminiProvider
         ? [AIService.defaultGeminiModel]
@@ -716,10 +674,7 @@ class _StaticAnalysisScreenState extends State<StaticAnalysisScreen> {
                 Expanded(
                   child: Text(
                     'Yapay Zekâ Analizi',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w900,
-                    ),
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
                   ),
                 ),
               ],
@@ -798,17 +753,7 @@ class _StaticAnalysisScreenState extends State<StaticAnalysisScreen> {
               child: FilledButton.icon(
                 onPressed: _isGeneratingAI
                     ? null
-                    : () {
-                        if (clocData == null) {
-                          setState(() {
-                            _aiError =
-                                'Dil dağılımı verisi henüz hazır değil. Lütfen biraz bekleyip tekrar dene.';
-                          });
-                          return;
-                        }
-
-                        _generateAIAnalysis(analysis, clocData);
-                      },
+                    : () => _generateAIAnalysis(analysis),
                 icon: _isGeneratingAI
                     ? const SizedBox(
                         width: 18,
@@ -850,10 +795,7 @@ class _StaticAnalysisScreenState extends State<StaticAnalysisScreen> {
             const SizedBox(height: 16),
             const Text(
               'Oluşturulan Sonuçlar',
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.w800,
-              ),
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
             ),
             const SizedBox(height: 10),
             _buildAISonucKartlari(),
@@ -872,10 +814,7 @@ class _StaticAnalysisScreenState extends State<StaticAnalysisScreen> {
           children: [
             const Text(
               'Teknik Bilgiler',
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.w900,
-              ),
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
             ),
             const SizedBox(height: 12),
             Text(
@@ -911,20 +850,14 @@ class _StaticAnalysisScreenState extends State<StaticAnalysisScreen> {
           const SizedBox(height: 6),
           const Text(
             'Projenin statik analiz sonuçlarını, dil dağılımını ve yapay zekâ destekli yorumları burada inceleyebilirsin.',
-            style: TextStyle(
-              color: AppColors.textSoft,
-              height: 1.4,
-            ),
+            style: TextStyle(color: AppColors.textSoft, height: 1.4),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildAnalysisBody(
-    AnalysisResult analysis,
-    AsyncSnapshot<Map<String, dynamic>> clocSnapshot,
-  ) {
+  Widget _buildAnalysisBody(AnalysisResult analysis) {
     return ListView(
       controller: _scrollController,
       padding: const EdgeInsets.only(bottom: 20),
@@ -932,30 +865,9 @@ class _StaticAnalysisScreenState extends State<StaticAnalysisScreen> {
         _buildPageHeader(),
         _buildSummaryCard(analysis),
         const SizedBox(height: 12),
-        _buildAIAnalysisCard(
-          analysis,
-          clocSnapshot.hasData ? clocSnapshot.data : null,
-        ),
+        _buildAIAnalysisCard(analysis),
         const SizedBox(height: 12),
-        if (clocSnapshot.connectionState == ConnectionState.waiting)
-          const Card(
-            child: Padding(
-              padding: EdgeInsets.all(20),
-              child: Center(child: CircularProgressIndicator()),
-            ),
-          )
-        else if (clocSnapshot.hasError)
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Text(
-                'Dil dağılımı yüklenemedi:\n${clocSnapshot.error}',
-                style: const TextStyle(color: AppColors.textSoft),
-              ),
-            ),
-          )
-        else if (clocSnapshot.hasData)
-          _buildClocChartCard(clocSnapshot.data!),
+        _buildLanguageChartCard(analysis),
         const SizedBox(height: 12),
         _buildTechnicalInfoCard(),
       ],
@@ -1030,12 +942,7 @@ class _StaticAnalysisScreenState extends State<StaticAnalysisScreen> {
               return _buildEmptyState();
             }
 
-            return FutureBuilder<Map<String, dynamic>>(
-              future: _futureCloc,
-              builder: (context, clocSnapshot) {
-                return _buildAnalysisBody(analysis, clocSnapshot);
-              },
-            );
+            return _buildAnalysisBody(analysis);
           },
         ),
       ),

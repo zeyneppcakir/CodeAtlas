@@ -12,11 +12,11 @@ class LLMRequest(BaseModel):
     prompt: str = Field(..., description="Modele gönderilecek prompt")
     provider: Optional[str] = Field(
         default=None,
-        description="LLM provider adı. Örn: gemini veya ollama"
+        description="LLM provider adı. Örn: gemini veya ollama",
     )
     model: Optional[str] = Field(
         default=None,
-        description="Kullanılacak model adı. Örn: gemini-2.5-flash, deepseek-coder, qwen2.5-coder:3b, minimax-m2:cloud"
+        description="Kullanılacak model adı. Örn: gemini-2.5-flash, deepseek-coder, qwen2.5-coder:3b, minimax-m2:cloud",
     )
 
 
@@ -29,19 +29,24 @@ class LLMResponse(BaseModel):
 @router.post("/generate", response_model=LLMResponse)
 def generate(request: LLMRequest):
     try:
-        if not request.prompt or not request.prompt.strip():
+        prompt = request.prompt.strip()
+
+        if not prompt:
             raise HTTPException(status_code=400, detail="Prompt boş olamaz.")
 
+        provider = request.provider.strip() if request.provider else None
+        model = request.model.strip() if request.model else None
+
         result = analyze_with_llm(
-            prompt=request.prompt.strip(),
-            provider=request.provider.strip() if request.provider else None,
-            model=request.model.strip() if request.model else None,
+            prompt=prompt,
+            provider=provider,
+            model=model,
         )
 
         return LLMResponse(
-            provider=result["provider"],
-            model=result["model"],
-            output=result["output"],
+            provider=result.get("provider", provider or ""),
+            model=result.get("model", model or ""),
+            output=result.get("output", ""),
         )
 
     except HTTPException:
@@ -53,5 +58,5 @@ def generate(request: LLMRequest):
     except Exception as e:
         raise HTTPException(
             status_code=500,
-            detail=f"LLM error: {str(e)}"
+            detail=f"LLM error: {str(e)}",
         )

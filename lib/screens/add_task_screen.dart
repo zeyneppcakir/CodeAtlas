@@ -608,14 +608,7 @@ Proje:
     final dueText = _formatDate(_dueDate);
 
     return Scaffold(
-      appBar: CodeAtlasAppBar(
-        actions: [
-          IconButton(
-            onPressed: () => Navigator.pop(context),
-            icon: const Icon(Icons.arrow_back),
-          ),
-        ],
-      ),
+      appBar: const CodeAtlasAppBar(),
       body: Padding(
         padding: const EdgeInsets.all(16),
         child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(

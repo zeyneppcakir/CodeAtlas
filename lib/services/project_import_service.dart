@@ -395,9 +395,9 @@ class ProjectImportService {
         .map(
           (entry) => LanguageStat(
             language: entry.key,
-            files: entry.value,
+            files: 0,
             bytes: 0,
-            lines: 0,
+            lines: entry.value,
           ),
         )
         .toList()

@@ -623,14 +623,7 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: CodeAtlasAppBar(
-        actions: [
-          IconButton(
-            onPressed: () => Navigator.pop(context),
-            icon: const Icon(Icons.arrow_back),
-          ),
-        ],
-      ),
+      appBar: const CodeAtlasAppBar(),
       floatingActionButton: FloatingActionButton(
         backgroundColor: AppColors.teal,
         onPressed: _openImport,

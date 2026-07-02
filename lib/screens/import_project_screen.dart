@@ -352,14 +352,7 @@ class _ImportProjectScreenState extends State<ImportProjectScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: CodeAtlasAppBar(
-        actions: [
-          IconButton(
-            onPressed: () => Navigator.pop(context),
-            icon: const Icon(Icons.arrow_back),
-          ),
-        ],
-      ),
+      appBar: const CodeAtlasAppBar(),
       body: Padding(
         padding: const EdgeInsets.all(16),
         child: SingleChildScrollView(

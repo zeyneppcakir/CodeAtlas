@@ -1,9 +1,8 @@
 import 'package:flutter/material.dart';
 
 import '../theme/app_theme.dart';
-import 'llm_analysis_screen.dart';
-import 'static_analysis_screen.dart';
 import '../widgets/codeatlas_appbar.dart';
+import 'static_analysis_screen.dart';
 
 class AnalysisMenuScreen extends StatelessWidget {
   final String? projectId;
@@ -56,67 +55,16 @@ class AnalysisMenuScreen extends StatelessWidget {
     );
   }
 
-  void _openLlmAnalysis(BuildContext context) {
-    if (!_hasProject) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('LLM analizini başlatmadan önce bir proje seçmelisin.'),
-        ),
-      );
-      return;
-    }
-
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => LlmAnalysisScreen(
-          projectId: projectId!.trim(),
-          projectName: projectName!.trim(),
-        ),
-      ),
-    );
-  }
-
-  void _showComingSoonMessage(
-    BuildContext context, {
-    required String featureName,
-    required String selectedProjectName,
-  }) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          '$featureName özelliği, "$selectedProjectName" projesi için yakında eklenecek.',
-        ),
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
-    final selectedProjectName =
-        _hasProject ? projectName!.trim() : 'Proje seçilmedi';
-
     return Scaffold(
-      appBar: CodeAtlasAppBar(
-        actions: [
-          IconButton(
-            onPressed: () => Navigator.pop(context),
-            icon: const Icon(Icons.arrow_back),
-          ),
-        ],
-      ),
+      appBar: const CodeAtlasAppBar(),
       body: Padding(
         padding: const EdgeInsets.all(16),
         child: _hasProject
             ? _MethodsBody(
                 projectName: projectName!.trim(),
                 onStaticAnalysis: () => _openStaticAnalysis(context),
-                onQualityRules: () => _showComingSoonMessage(
-                  context,
-                  featureName: 'Kod kalitesi analizi',
-                  selectedProjectName: selectedProjectName,
-                ),
-                onLlm: () => _openLlmAnalysis(context),
               )
             : _NoProjectBody(
                 onSelectProject: () => _goBackOrShowProjectsHint(context),
@@ -175,14 +123,10 @@ class _NoProjectBody extends StatelessWidget {
 class _MethodsBody extends StatelessWidget {
   final String projectName;
   final VoidCallback onStaticAnalysis;
-  final VoidCallback onQualityRules;
-  final VoidCallback onLlm;
 
   const _MethodsBody({
     required this.projectName,
     required this.onStaticAnalysis,
-    required this.onQualityRules,
-    required this.onLlm,
   });
 
   @override
@@ -191,7 +135,7 @@ class _MethodsBody extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const Text(
-          'Analiz yöntemi seç',
+          'Analiz ekranı',
           style: TextStyle(
             fontSize: 18,
             fontWeight: FontWeight.w800,
@@ -206,24 +150,9 @@ class _MethodsBody extends StatelessWidget {
         _MethodCard(
           title: 'Statik Analiz',
           subtitle:
-              'Dosya sayısı, dil dağılımı ve temel kod metriklerini gösterir.',
+              'Dosya sayısı, dil dağılımı, kod metrikleri ve yapay zekâ destekli yorumları gösterir.',
           icon: Icons.analytics_outlined,
           onTap: onStaticAnalysis,
-        ),
-        const SizedBox(height: 12),
-        _MethodCard(
-          title: 'Kod Kalitesi Analizi',
-          subtitle:
-              'Kod kokuları, temel kurallar ve iyileştirme önerilerini sunar.',
-          icon: Icons.rule_folder_outlined,
-          onTap: onQualityRules,
-        ),
-        const SizedBox(height: 12),
-        _MethodCard(
-          title: 'LLM Destekli Analiz',
-          subtitle: 'Kod özeti, riskler ve geliştirme önerileri sunar.',
-          icon: Icons.auto_awesome,
-          onTap: onLlm,
         ),
       ],
     );
